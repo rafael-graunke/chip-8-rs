@@ -1,21 +1,21 @@
 use std::fs::File;
 use std::io::prelude::*;
 
-const SCREEN_WIDTH: u8 = 64;
-const SCREEN_HEIGHT: usize = 32;
+pub const SCREEN_WIDTH: u8 = 64;
+pub const SCREEN_HEIGHT: usize = 32;
 const MEM_OFFSET: u16 = 0x200;
 const FONT_OFFSET: u16 = 0x50;
 
 pub struct Chip8 {
     memory: Vec<u8>,
     stack: Vec<u8>,
-    display: [u64; SCREEN_HEIGHT], // change later
+    pub display: [u64; SCREEN_HEIGHT], // change later
     registers: [u8; 16],
     fonts: [u8; 80],
     vi: u16,
     pc: u16,
     did_jump: bool,
-    should_draw: bool,
+    pub should_draw: bool,
 }
 
 impl Chip8 {
@@ -50,7 +50,7 @@ impl Chip8 {
             vi: 0u16,
             pc: 0u16,
             did_jump: false,
-            should_draw: false
+            should_draw: false,
         }
     }
 
@@ -127,12 +127,14 @@ impl Chip8 {
     pub fn step(&mut self) {
         let opcode = self.get_opcode();
 
+        println!("{:#06x}", opcode);
         self.run_opcode(opcode);
 
         if !self.did_jump {
             self.pc += 2;
-            self.did_jump = false;
         };
+
+        self.did_jump = false;
     }
 
     /* opcode functions (might change) */
@@ -146,15 +148,18 @@ impl Chip8 {
     }
 
     fn load_register(&mut self, opcode: u16) {
-        let index = opcode & 0x0F00 >> 8;
+        let index = (opcode & 0x0F00) >> 8;
         let value = opcode & 0x00FF;
         self.registers[index as usize] = value as u8;
     }
 
     fn add_to_register(&mut self, opcode: u16) {
-        let index = opcode & 0x0F00 >> 8;
+        let index = (opcode & 0x0F00) >> 8;
         let value = opcode & 0x00FF;
-        self.registers[index as usize] += value as u8;
+
+        let sum_overflow = value as u16 + self.registers[index as usize] as u16;
+
+        self.registers[index as usize] = sum_overflow as u8; // need to check doc for this overflow
     }
 
     fn set_vi(&mut self, opcode: u16) {
@@ -162,8 +167,10 @@ impl Chip8 {
     }
 
     fn draw(&mut self, opcode: u16) {
-        let vx = (opcode & 0x0F00 >> 8) as usize;
-        let vy = (opcode & 0x00F0 >> 4) as usize;
+        self.should_draw = true;
+
+        let vx = ((opcode & 0x0F00) >> 8) as usize;
+        let vy = ((opcode & 0x00F0) >> 4) as usize;
 
         let x = self.registers[vx] & (SCREEN_WIDTH - 1);
         let y = (self.registers[vy] & SCREEN_HEIGHT as u8 - 1) as usize;
@@ -179,7 +186,8 @@ impl Chip8 {
                 self.fonts[(address - FONT_OFFSET) as usize]
             }) as u64;
 
-            let offset_sprite = sprite >> SCREEN_WIDTH - 8 - x;
+            let offset_sprite = sprite << ((SCREEN_WIDTH - 8) - x);
+
             let new_line = *line ^ offset_sprite;
 
             /* Set VF to 1 if flips bit to off */
