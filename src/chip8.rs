@@ -186,7 +186,7 @@ impl Chip8 {
                 self.fonts[(address - FONT_OFFSET) as usize]
             }) as u64;
 
-            let offset_sprite = sprite << ((SCREEN_WIDTH - 8) - x);
+            let offset_sprite = sprite << (SCREEN_WIDTH - 8) >> x; // Fixes subtract overflow
 
             let new_line = *line ^ offset_sprite;
 
