@@ -9,6 +9,7 @@ struct Chip8 {
     display: [u64; 32], // change later
     registers: [u8; 16],
     vi: u16,
+    pc: u16,
 }
 
 impl Chip8 {
@@ -39,6 +40,7 @@ impl Chip8 {
             display: [0u64; 32],
             registers: [0u8; 16],
             vi: 0u16,
+            pc: 0u16,
         }
     }
 
