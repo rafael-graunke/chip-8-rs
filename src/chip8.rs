@@ -1,7 +1,7 @@
+use rand::Rng;
 use std::fs::File;
 use std::io::prelude::*;
 
-use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::Canvas;
@@ -61,7 +61,7 @@ impl Display {
 
 pub struct Chip8 {
     memory: Vec<u8>,
-    stack: Vec<u8>,
+    stack: Vec<u16>,
     display: Display,
     registers: [u8; 16],
     fonts: [u8; 80],
@@ -149,16 +149,17 @@ impl Chip8 {
 
         match self.opcode & mask {
             0x1000 => self.jump(),
-            0x2000 => println!("CALL addr"),
-            0x3000 => println!("SE Vx, byte"),
-            0x4000 => println!("SNE Vx, byte"),
-            0x5000 => println!("SE Vx, Vy"),
+            0x2000 => self.call_subroutine(),
+            0x3000 => self.skip_equal(),
+            0x4000 => self.skip_not_equal(),
+            0x5000 => self.skip_register_equal(),
             0x6000 => self.load_register(),
             0x7000 => self.add_to_register(),
-            0x9000 => println!("SNE Vx, Vy"),
+            0x8000 => self.logic_op(),
+            0x9000 => self.skip_register_not_equal(),
             0xA000 => self.set_vi(),
-            0xB000 => println!("JP V0, addr"),
-            0xC000 => println!("RND Vx, byte"),
+            0xB000 => println!("JP V0, addr"), // make it configurable
+            0xC000 => self.random_number(),
             0xD000 => self.draw(),
             _ => {}
         }
@@ -168,16 +169,7 @@ impl Chip8 {
 
         match self.opcode & mask {
             0x0000 => self.clear_screen(),
-            0x000E => println!("RET"),
-            0x8000 => println!("LD Vx, Vy"),
-            0x8001 => println!("OR Vx, Vy"),
-            0x8002 => println!("AND Vx, Vy"),
-            0x8003 => println!("XOR Vx, Vy"),
-            0x8004 => println!("ADD Vx, Vy"),
-            0x8005 => println!("SUB Vx, Vy"),
-            0x8006 => println!("SHR Vx {{, Vy}}"),
-            0x8007 => println!("SUBN Vx, Vy"),
-            0x800E => println!("SHL Vx {{, Vy}}"),
+            0x000E => self.return_subroutine(),
             0xE00E => println!("SKP Vx"),
             0xE001 => println!("SKNP Vx1"),
             _ => {}
@@ -211,7 +203,106 @@ impl Chip8 {
         self.did_jump = false;
     }
 
-    /* opcode functions (might change) */
+    /* opcode functions (might change(?)) */
+    fn logic_op(&mut self) {
+        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let x = self.registers[vx];
+
+        let vy = ((self.opcode & 0x00F0) >> 4) as usize;
+        let y = self.registers[vy];
+
+        let operation = self.opcode & 0x000F;
+
+        self.registers[vx] = match operation {
+            0 => y,
+            1 => x | y,
+            2 => x & y,
+            3 => x ^ y,
+            4 => (x as u16 + y as u16) as u8,
+            5 => self.subtract_overflow(x, y),
+            7 => self.subtract_overflow(y, x),
+            _ => 0,
+        }
+    }
+
+    fn subtract_overflow(&mut self, n1: u8, n2: u8) -> u8 {
+        let mut n1 = n1 as u16;
+        let n2 = n2 as u16;
+
+        if n1 >= n2 {
+            self.registers[0xF] = 1;
+            (n1 - n2) as u8
+        } else {
+            self.registers[0xF] = 0;
+            n1 |= 0x100;
+            (n1 - n2) as u8
+        }
+    }
+
+    fn random_number(&mut self) {
+        let mut rng = rand::thread_rng();
+
+        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+
+        let nn: u8 = (self.opcode & 0x00FF) as u8;
+        let random: u8 = rng.gen();
+
+        self.registers[vx] = random & nn;
+    }
+
+    fn skip_equal(&mut self) {
+        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let x = self.registers[vx];
+
+        let value = (self.opcode & 0x00FF) as u8;
+        if x == value {
+            self.pc += 2;
+        }
+    }
+
+    fn skip_not_equal(&mut self) {
+        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let x = self.registers[vx];
+
+        let value = (self.opcode & 0x00FF) as u8;
+        if x != value {
+            self.pc += 2;
+        }
+    }
+
+    fn skip_register_equal(&mut self) {
+        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let x = self.registers[vx];
+
+        let vy = ((self.opcode & 0x00F0) >> 4) as usize;
+        let y = self.registers[vy];
+
+        if x == y {
+            self.pc += 2;
+        }
+    }
+
+    fn skip_register_not_equal(&mut self) {
+        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let x = self.registers[vx];
+
+        let vy = ((self.opcode & 0x00F0) >> 4) as usize;
+        let y = self.registers[vy];
+
+        if x != y {
+            self.pc += 2;
+        }
+    }
+
+    fn call_subroutine(&mut self) {
+        self.stack.push(self.pc);
+        self.pc = (self.opcode & 0x0FFF) - MEM_OFFSET;
+    }
+
+    fn return_subroutine(&mut self) {
+        self.pc = self.stack.pop().unwrap();
+    }
+
     fn clear_screen(&mut self) {
         self.display.clear();
     }
