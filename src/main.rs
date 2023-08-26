@@ -5,7 +5,7 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::video::Window;
 use sdl2::{event::Event, render::Canvas};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::chip8::{Chip8, SCREEN_HEIGHT, SCREEN_WIDTH};
 use std::env;
@@ -13,6 +13,7 @@ use std::env;
 mod chip8;
 
 const PIXEL_SCALE: usize = 20;
+const FPS: u128 = 60;
 
 fn render(canvas: &mut Canvas<Window>, chip: &Chip8) {
     let mut pixel = Rect::new(0, 0, PIXEL_SCALE as u32, PIXEL_SCALE as u32);
@@ -60,30 +61,37 @@ fn main() -> Result<(), String> {
 
     let args: Vec<String> = env::args().collect();
     let rom_path = &args[1];
+    let ipf: u32 = args[2].parse::<u32>().unwrap();
 
     let mut chip = Chip8::new();
     chip.read_rom(rom_path);
 
     'running: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
-                _ => {}
-            }
-        }
+        let start = SystemTime::now();
 
-        chip.step();
+        for _ in 0..ipf {
+            for event in event_pump.poll_iter() {
+                match event {
+                    Event::Quit { .. }
+                    | Event::KeyDown {
+                        keycode: Some(Keycode::Escape),
+                        ..
+                    } => break 'running,
+                    _ => {}
+                }
+            }
+
+            chip.step();
+        }
 
         if chip.should_draw {
             render(&mut canvas, &chip);
             chip.should_draw = false;
         }
 
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 600));
+        let sleep_for = start.elapsed().unwrap().as_nanos() + 1_000_000_000 / FPS;
+
+        ::std::thread::sleep(Duration::new(0, sleep_for as u32));
     }
 
     Ok(())
