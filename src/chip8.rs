@@ -1,15 +1,68 @@
 use std::fs::File;
 use std::io::prelude::*;
 
-pub const SCREEN_WIDTH: u8 = 64;
-pub const SCREEN_HEIGHT: usize = 32;
+use sdl2::keyboard::Keycode;
+use sdl2::pixels::Color;
+use sdl2::rect::Rect;
+use sdl2::render::Canvas;
+use sdl2::video::Window;
+use sdl2::Sdl;
+
+const SCREEN_WIDTH: u8 = 64;
+const SCREEN_HEIGHT: usize = 32;
+const PIXEL_SCALE: usize = 20;
 const MEM_OFFSET: u16 = 0x200;
 const FONT_OFFSET: u16 = 0x50;
+
+struct Display {
+    screen_memory: [u64; SCREEN_HEIGHT],
+    display: Canvas<Window>,
+}
+
+impl Display {
+    fn init_canvas(sdl: &Sdl) -> Canvas<Window> {
+        let video_subsystem = sdl.video().unwrap();
+
+        let window = video_subsystem
+            .window(
+                "rust-sdl2 demo: Video",
+                (SCREEN_WIDTH as u32 * PIXEL_SCALE as u32) as u32,
+                (SCREEN_HEIGHT as u32 * PIXEL_SCALE as u32) as u32,
+            )
+            .position_centered()
+            .opengl()
+            .build()
+            .map_err(|e| e.to_string())
+            .unwrap();
+
+        let mut canvas = window
+            .into_canvas()
+            .build()
+            .map_err(|e| e.to_string())
+            .unwrap();
+
+        canvas.set_draw_color(Color::RGB(38, 17, 13));
+        canvas.clear();
+
+        canvas
+    }
+
+    pub fn new(sdl: &Sdl) -> Display {
+        Display {
+            screen_memory: [0u64; SCREEN_HEIGHT],
+            display: Display::init_canvas(sdl),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.screen_memory = [0u64; SCREEN_HEIGHT];
+    }
+}
 
 pub struct Chip8 {
     memory: Vec<u8>,
     stack: Vec<u8>,
-    pub display: [u64; SCREEN_HEIGHT], // change later
+    display: Display,
     registers: [u8; 16],
     fonts: [u8; 80],
     vi: u16,
@@ -19,8 +72,8 @@ pub struct Chip8 {
 }
 
 impl Chip8 {
-    fn font_data() -> [u8; 80] {
-        [
+    pub fn new(sdl: &Sdl) -> Chip8 {
+        let font_data = [
             0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
             0x20, 0x60, 0x20, 0x20, 0x70, // 1
             0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -37,16 +90,14 @@ impl Chip8 {
             0xE0, 0x90, 0x90, 0x90, 0xE0, // D
             0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
             0xF0, 0x80, 0xF0, 0x80, 0x80, // F
-        ]
-    }
+        ];
 
-    pub fn new() -> Chip8 {
         Chip8 {
             memory: vec![],
             stack: vec![],
-            display: [0u64; SCREEN_HEIGHT],
+            display: Display::new(&sdl),
             registers: [0u8; 16],
-            fonts: Chip8::font_data(),
+            fonts: font_data,
             vi: 0u16,
             pc: 0u16,
             did_jump: false,
@@ -60,6 +111,29 @@ impl Chip8 {
         file.read_to_end(&mut data).unwrap();
 
         self.memory.append(&mut data); // loads rom to ram
+    }
+
+    pub fn get_input(&self) {
+        unimplemented!();
+    }
+
+    pub fn render(&mut self) {
+        let mut pixel = Rect::new(0, 0, PIXEL_SCALE as u32, PIXEL_SCALE as u32);
+
+        let width = SCREEN_WIDTH as u64;
+
+        for (row_index, row) in self.display.screen_memory.iter().enumerate() {
+            for column in 0..width {
+                if 1u64 << (width - 1 - column) & row != 0 {
+                    pixel.x = column as i32 * PIXEL_SCALE as i32;
+                    pixel.y = row_index as i32 * PIXEL_SCALE as i32;
+                    self.display.display.set_draw_color(Color::RGB(155, 66, 49));
+                    self.display.display.fill_rect(pixel).unwrap();
+                }
+            }
+        }
+
+        self.display.display.present();
     }
 
     // might change this later
@@ -139,7 +213,7 @@ impl Chip8 {
 
     /* opcode functions (might change) */
     fn clear_screen(&mut self) {
-        self.display = [0u64; SCREEN_HEIGHT];
+        self.display.clear();
     }
 
     fn jump(&mut self, opcode: u16) {
@@ -177,7 +251,7 @@ impl Chip8 {
 
         let n = (opcode & 0x000F) as usize;
 
-        for (index, line) in self.display[y..n + y].iter_mut().enumerate() {
+        for (index, line) in self.display.screen_memory[y..n + y].iter_mut().enumerate() {
             let address = self.vi + index as u16;
 
             let sprite = (if address >= MEM_OFFSET {
