@@ -26,8 +26,8 @@ impl Display {
         let window = video_subsystem
             .window(
                 "rust-sdl2 demo: Video",
-                (SCREEN_WIDTH as u32 * PIXEL_SCALE as u32) as u32,
-                (SCREEN_HEIGHT as u32 * PIXEL_SCALE as u32) as u32,
+                SCREEN_WIDTH as u32 * PIXEL_SCALE as u32,
+                SCREEN_HEIGHT as u32 * PIXEL_SCALE as u32,
             )
             .position_centered()
             .opengl()
@@ -65,6 +65,7 @@ pub struct Chip8 {
     display: Display,
     registers: [u8; 16],
     fonts: [u8; 80],
+    opcode: u16,
     vi: u16,
     pc: u16,
     did_jump: bool,
@@ -98,6 +99,7 @@ impl Chip8 {
             display: Display::new(&sdl),
             registers: [0u8; 16],
             fonts: font_data,
+            opcode: 0u16,
             vi: 0u16,
             pc: 0u16,
             did_jump: false,
@@ -136,35 +138,35 @@ impl Chip8 {
         self.display.display.present();
     }
 
-    // might change this later
-    fn get_opcode(&self) -> u16 {
-        (self.memory[self.pc as usize] as u16) << 8 | (self.memory[(self.pc + 1) as usize] as u16)
+    fn update_opcode(&mut self) {
+        self.opcode = (self.memory[self.pc as usize] as u16) << 8
+            | (self.memory[(self.pc + 1) as usize] as u16);
     }
 
-    fn run_opcode(&mut self, opcode: u16) {
+    fn run_opcode(&mut self) {
         // for single nibble determinant
         let mut mask = 0xF000;
 
-        match opcode & mask {
-            0x1000 => self.jump(opcode),
+        match self.opcode & mask {
+            0x1000 => self.jump(),
             0x2000 => println!("CALL addr"),
             0x3000 => println!("SE Vx, byte"),
             0x4000 => println!("SNE Vx, byte"),
             0x5000 => println!("SE Vx, Vy"),
-            0x6000 => self.load_register(opcode),
-            0x7000 => self.add_to_register(opcode),
+            0x6000 => self.load_register(),
+            0x7000 => self.add_to_register(),
             0x9000 => println!("SNE Vx, Vy"),
-            0xA000 => self.set_vi(opcode),
+            0xA000 => self.set_vi(),
             0xB000 => println!("JP V0, addr"),
             0xC000 => println!("RND Vx, byte"),
-            0xD000 => self.draw(opcode),
+            0xD000 => self.draw(),
             _ => {}
         }
 
         // for dual nibble determinant
         mask = 0xF00F;
 
-        match opcode & mask {
+        match self.opcode & mask {
             0x0000 => self.clear_screen(),
             0x000E => println!("RET"),
             0x8000 => println!("LD Vx, Vy"),
@@ -184,7 +186,7 @@ impl Chip8 {
         //for F codes
         mask = 0xF0FF;
 
-        match opcode & mask {
+        match self.opcode & mask {
             0xF007 => println!("LD Vx, DT"),
             0xF00A => println!("LD Vx, K"),
             0xF015 => println!("LD DT, Vx"),
@@ -199,10 +201,8 @@ impl Chip8 {
     }
 
     pub fn step(&mut self) {
-        let opcode = self.get_opcode();
-
-        println!("{:#06x}", opcode);
-        self.run_opcode(opcode);
+        self.update_opcode();
+        self.run_opcode();
 
         if !self.did_jump {
             self.pc += 2;
@@ -216,40 +216,40 @@ impl Chip8 {
         self.display.clear();
     }
 
-    fn jump(&mut self, opcode: u16) {
-        self.pc = (opcode & 0x0FFF) - MEM_OFFSET;
+    fn jump(&mut self) {
+        self.pc = (self.opcode & 0x0FFF) - MEM_OFFSET;
         self.did_jump = true;
     }
 
-    fn load_register(&mut self, opcode: u16) {
-        let index = (opcode & 0x0F00) >> 8;
-        let value = opcode & 0x00FF;
+    fn load_register(&mut self) {
+        let index = (self.opcode & 0x0F00) >> 8;
+        let value = self.opcode & 0x00FF;
         self.registers[index as usize] = value as u8;
     }
 
-    fn add_to_register(&mut self, opcode: u16) {
-        let index = (opcode & 0x0F00) >> 8;
-        let value = opcode & 0x00FF;
+    fn add_to_register(&mut self) {
+        let index = (self.opcode & 0x0F00) >> 8;
+        let value = self.opcode & 0x00FF;
 
         let sum_overflow = value as u16 + self.registers[index as usize] as u16;
 
         self.registers[index as usize] = sum_overflow as u8; // need to check doc for this overflow
     }
 
-    fn set_vi(&mut self, opcode: u16) {
-        self.vi = opcode & 0x0FFF;
+    fn set_vi(&mut self) {
+        self.vi = self.opcode & 0x0FFF;
     }
 
-    fn draw(&mut self, opcode: u16) {
+    fn draw(&mut self) {
         self.should_draw = true;
 
-        let vx = ((opcode & 0x0F00) >> 8) as usize;
-        let vy = ((opcode & 0x00F0) >> 4) as usize;
+        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let vy = ((self.opcode & 0x00F0) >> 4) as usize;
 
         let x = self.registers[vx] & (SCREEN_WIDTH - 1);
         let y = (self.registers[vy] & SCREEN_HEIGHT as u8 - 1) as usize;
 
-        let n = (opcode & 0x000F) as usize;
+        let n = (self.opcode & 0x000F) as usize;
 
         for (index, line) in self.display.screen_memory[y..n + y].iter_mut().enumerate() {
             let address = self.vi + index as u16;
