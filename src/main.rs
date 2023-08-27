@@ -8,6 +8,7 @@ use crate::chip8::Chip8;
 use std::env;
 
 mod chip8;
+mod screen;
 
 const FPS: u128 = 60;
 
