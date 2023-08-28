@@ -18,6 +18,7 @@ pub struct Chip8 {
     vi: u16,
     pc: u16,
     did_jump: bool,
+    delay_timer: u8,
     pub should_draw: bool,
 }
 
@@ -51,6 +52,7 @@ impl Chip8 {
             opcode: 0u16,
             vi: 0u16,
             pc: 0u16,
+            delay_timer: 0u8,
             did_jump: false,
             should_draw: false,
         }
@@ -118,26 +120,66 @@ impl Chip8 {
             0xF015 => println!("LD DT, Vx"),
             0xF018 => println!("LD ST, Vx"),
             0xF01E => println!("ADD I, Vx"),
-            0xF029 => println!("LD F, Vx"),
-            0xF033 => println!("LD B, Vx"),
-            0xF055 => println!("LD [I], Vx"),
-            0xF065 => println!("LD Vx, [I]"),
+            0xF029 => self.set_font_character(),
+            0xF033 => self.binary_coded_decimal(),
+            0xF055 => self.load_to_memory(),
+            0xF065 => self.load_from_memory(),
             _ => {}
         }
     }
 
-    pub fn step(&mut self) {
-        self.update_opcode();
-        self.run_opcode();
+    pub fn step(&mut self, ipf: u32) {
+        for _ in 0..ipf {
+            self.update_opcode();
+            self.run_opcode();
 
-        if !self.did_jump {
-            self.pc += 2;
-        };
+            if !self.did_jump {
+                self.pc += 2;
+            };
 
-        self.did_jump = false;
+            self.did_jump = false;
+        }
+
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
     }
 
     /* opcode functions (might change(?)) */
+    fn set_font_character(&mut self) {
+        let x = (self.opcode & 0x0F00) >> 8;
+        self.vi = x;
+    }
+
+    fn load_to_memory(&mut self) {
+        let x = (self.opcode & 0x0F00) >> 8;
+
+        for i in 0..=x {
+            let mem_address = (self.vi - MEM_OFFSET) + i;
+            self.memory[mem_address as usize] = self.registers[i as usize];
+        }
+    }
+
+    fn load_from_memory(&mut self) {
+        let x: u16 = (self.opcode & 0x0F00) >> 8;
+
+        for i in 0..=x {
+            let mem_address = (self.vi - MEM_OFFSET) + i;
+            self.registers[i as usize] = self.memory[mem_address as usize];
+        }
+    }
+
+    fn binary_coded_decimal(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+        let x = self.registers[vx as usize];
+
+        let address = self.vi - MEM_OFFSET;
+
+        self.memory[(address) as usize] = x / 100;
+        self.memory[(address + 1) as usize] = (x % 100) / 10;
+        self.memory[(address + 2) as usize] = x % 10;
+    }
+
     fn logic_op(&mut self) {
         let vx = ((self.opcode & 0x0F00) >> 8) as usize;
         let x = self.registers[vx];
@@ -283,7 +325,7 @@ impl Chip8 {
             let sprite = (if address >= MEM_OFFSET {
                 self.memory[(address - MEM_OFFSET) as usize]
             } else {
-                self.fonts[(address - FONT_OFFSET) as usize]
+                self.fonts[(address) as usize]
             }) as u64;
 
             let offset_sprite = sprite << (SCREEN_WIDTH - 8) >> x; // Fixes subtract overflow

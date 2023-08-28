@@ -38,10 +38,9 @@ fn main() -> Result<(), String> {
                     _ => {}
                 }
             }
-
-            chip.step();
         }
 
+        chip.step(ipf);
         chip.render();
 
         let sleep_for = start.elapsed().unwrap().as_nanos() + 1_000_000_000 / FPS;
