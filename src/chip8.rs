@@ -1,14 +1,38 @@
 use rand::Rng;
-use sdl2::Sdl;
+use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use sdl2::{EventPump, Sdl};
 use std::fs::File;
 use std::io::prelude::*;
 
 use crate::screen::{Display, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 const MEM_OFFSET: u16 = 0x200;
-const FONT_OFFSET: u16 = 0x50;
 
-pub struct Chip8 {
+struct SquareWave {
+    phase_inc: f32,
+    phase: f32,
+    volume: f32,
+}
+
+impl AudioCallback for SquareWave {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        // Generate a square wave
+        for x in out.iter_mut() {
+            *x = if self.phase <= 0.5 {
+                self.volume
+            } else {
+                -self.volume
+            };
+            self.phase = (self.phase + self.phase_inc) % 1.0;
+        }
+    }
+}
+
+pub struct Chip8<'a> {
     memory: Vec<u8>,
     stack: Vec<u16>,
     display: Display,
@@ -19,11 +43,14 @@ pub struct Chip8 {
     pc: u16,
     did_jump: bool,
     delay_timer: u8,
+    sound_timer: u8,
+    sound_device: AudioDevice<SquareWave>,
+    event_pump: &'a mut EventPump,
     pub should_draw: bool,
 }
 
-impl Chip8 {
-    pub fn new(sdl: &Sdl) -> Chip8 {
+impl Chip8<'_> {
+    pub fn new<'a>(sdl: &'a Sdl, event_pump: &'a mut EventPump) -> Chip8<'a> {
         let font_data = [
             0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
             0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -43,6 +70,25 @@ impl Chip8 {
             0xF0, 0x80, 0xF0, 0x80, 0x80, // F
         ];
 
+        let audio_subsystem = sdl.audio().unwrap();
+
+        let desired_spec = AudioSpecDesired {
+            freq: Some(44100),
+            channels: Some(1), // mono
+            samples: None,     // default sample size
+        };
+
+        let device = audio_subsystem
+            .open_playback(None, &desired_spec, |spec| {
+                // initialize the audio callback
+                SquareWave {
+                    phase_inc: 440.0 / spec.freq as f32,
+                    phase: 0.0,
+                    volume: 0.05,
+                }
+            })
+            .unwrap();
+
         Chip8 {
             memory: vec![],
             stack: vec![],
@@ -53,7 +99,10 @@ impl Chip8 {
             vi: 0u16,
             pc: 0u16,
             delay_timer: 0u8,
+            sound_timer: 0u8,
+            sound_device: device,
             did_jump: false,
+            event_pump: event_pump,
             should_draw: false,
         }
     }
@@ -64,10 +113,6 @@ impl Chip8 {
         file.read_to_end(&mut data).unwrap();
 
         self.memory.append(&mut data); // loads rom to ram
-    }
-
-    pub fn get_input(&self) {
-        unimplemented!();
     }
 
     pub fn render(&mut self) {
@@ -116,9 +161,9 @@ impl Chip8 {
 
         match self.opcode & mask {
             0xF007 => self.load_from_dt(),
-            0xF00A => println!("LD Vx, K"),
+            0xF00A => self.wait_for_input(),
             0xF015 => self.load_to_dt(),
-            0xF018 => println!("LD ST, Vx"),
+            0xF018 => self.load_to_st(),
             0xF01E => println!("ADD I, Vx"),
             0xF029 => self.set_font_character(),
             0xF033 => self.binary_coded_decimal(),
@@ -128,7 +173,20 @@ impl Chip8 {
         }
     }
 
-    pub fn step(&mut self, ipf: u32) {
+    pub fn step(&mut self, ipf: u32) -> bool {
+        let mut running = true;
+
+        for event in self.event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => running = false,
+                _ => {}
+            }
+        }
+
         for _ in 0..ipf {
             self.update_opcode();
             self.run_opcode();
@@ -143,9 +201,103 @@ impl Chip8 {
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
         }
+
+        if self.sound_timer > 0 {
+            self.sound_device.resume();
+            self.sound_timer -= 1;
+        } else {
+            self.sound_device.pause();
+        }
+
+        running
     }
 
     /* opcode functions (might change(?)) */
+    fn wait_for_input(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+
+        let mut key_pressed = false;
+
+        while !key_pressed {
+            for event in self.event_pump.poll_iter() {
+                let key = match event {
+                    Event::KeyUp {
+                        keycode: Some(Keycode::Num1),
+                        ..
+                    } => Some(0),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::Num2),
+                        ..
+                    } => Some(1),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::Num3),
+                        ..
+                    } => Some(2),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::Num4),
+                        ..
+                    } => Some(3),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::Q),
+                        ..
+                    } => Some(4),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::W),
+                        ..
+                    } => Some(5),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::E),
+                        ..
+                    } => Some(6),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::R),
+                        ..
+                    } => Some(7),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::A),
+                        ..
+                    } => Some(8),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::S),
+                        ..
+                    } => Some(9),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::D),
+                        ..
+                    } => Some(10),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::F),
+                        ..
+                    } => Some(11),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::Z),
+                        ..
+                    } => Some(12),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::X),
+                        ..
+                    } => Some(13),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::C),
+                        ..
+                    } => Some(14),
+                    Event::KeyUp {
+                        keycode: Some(Keycode::V),
+                        ..
+                    } => Some(15),
+                    _ => None,
+                };
+
+                match key {
+                    Some(n) => {
+                        self.registers[vx as usize] = n as u8;
+                        key_pressed = true;
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
     fn load_from_dt(&mut self) {
         let vx = (self.opcode & 0x0F00) >> 8;
         self.registers[vx as usize] = self.delay_timer;
@@ -154,6 +306,11 @@ impl Chip8 {
     fn load_to_dt(&mut self) {
         let vx = (self.opcode & 0x0F00) >> 8;
         self.delay_timer = self.registers[vx as usize];
+    }
+
+    fn load_to_st(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+        self.sound_timer = self.registers[vx as usize];
     }
 
     fn set_font_character(&mut self) {
