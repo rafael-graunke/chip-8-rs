@@ -53,6 +53,9 @@ impl Display {
     }
 
     pub fn render(&mut self) {
+        self.canvas.set_draw_color(Color::RGB(38, 17, 13));
+        self.canvas.clear();
+
         let mut pixel = Rect::new(0, 0, PIXEL_SCALE as u32, PIXEL_SCALE as u32);
 
         let width = SCREEN_WIDTH as u64;
@@ -67,7 +70,6 @@ impl Display {
                 }
             }
         }
-
         self.canvas.present();
     }
 }
