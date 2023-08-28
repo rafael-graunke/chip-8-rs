@@ -1,8 +1,10 @@
 use rand::Rng;
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
+use sdl2::keyboard::{Keycode, Scancode};
+use sdl2::sys::{KeyCode, KeyPress};
 use sdl2::{EventPump, Sdl};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::prelude::*;
 
@@ -151,8 +153,8 @@ impl Chip8<'_> {
         match self.opcode & mask {
             0x0000 => self.clear_screen(),
             0x000E => self.return_subroutine(),
-            0xE00E => println!("SKP Vx"),
-            0xE001 => println!("SKNP Vx1"),
+            0xE00E => self.skip_if_key(),
+            0xE001 => self.skip_if_not_key(),
             _ => {}
         }
 
@@ -164,7 +166,7 @@ impl Chip8<'_> {
             0xF00A => self.wait_for_input(),
             0xF015 => self.load_to_dt(),
             0xF018 => self.load_to_st(),
-            0xF01E => println!("ADD I, Vx"),
+            0xF01E => self.add_to_index(),
             0xF029 => self.set_font_character(),
             0xF033 => self.binary_coded_decimal(),
             0xF055 => self.load_to_memory(),
@@ -212,7 +214,69 @@ impl Chip8<'_> {
         running
     }
 
-    /* opcode functions (might change(?)) */
+    fn add_to_index(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+        self.vi += self.registers[vx as usize] as u16;
+    }
+
+    fn skip_if_key(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+
+        let key_mapping = HashMap::from([
+            (0, Scancode::Num1),
+            (1, Scancode::Num2),
+            (2, Scancode::Num3),
+            (3, Scancode::Num4),
+            (4, Scancode::Q),
+            (5, Scancode::W),
+            (6, Scancode::E),
+            (7, Scancode::R),
+            (8, Scancode::A),
+            (9, Scancode::S),
+            (10, Scancode::D),
+            (11, Scancode::F),
+            (12, Scancode::Z),
+            (13, Scancode::X),
+            (14, Scancode::C),
+            (15, Scancode::V),
+        ]);
+
+        let key = key_mapping.get(&self.registers[vx as usize]).unwrap();
+
+        if self.event_pump.keyboard_state().pressed_scancodes().any(|x| x == *key) {
+            self.pc += 2;
+        };
+    }
+
+    fn skip_if_not_key(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+
+        let key_mapping = HashMap::from([
+            (0, Scancode::Num1),
+            (1, Scancode::Num2),
+            (2, Scancode::Num3),
+            (3, Scancode::Num4),
+            (4, Scancode::Q),
+            (5, Scancode::W),
+            (6, Scancode::E),
+            (7, Scancode::R),
+            (8, Scancode::A),
+            (9, Scancode::S),
+            (10, Scancode::D),
+            (11, Scancode::F),
+            (12, Scancode::Z),
+            (13, Scancode::X),
+            (14, Scancode::C),
+            (15, Scancode::V),
+        ]);
+
+        let key = key_mapping.get(&self.registers[vx as usize]).unwrap();
+
+        if self.event_pump.keyboard_state().pressed_scancodes().all(|x| x != *key) {
+            self.pc += 2;
+        };
+    }
+
     fn wait_for_input(&mut self) {
         let vx = (self.opcode & 0x0F00) >> 8;
 
@@ -484,11 +548,11 @@ impl Chip8<'_> {
         let vy = ((self.opcode & 0x00F0) >> 4) as usize;
 
         let x = self.registers[vx] & (SCREEN_WIDTH - 1);
-        let y = (self.registers[vy] & SCREEN_HEIGHT as u8 - 1) as usize;
+        let y = (self.registers[vy] & (SCREEN_HEIGHT as u8 - 1)) as usize;
 
         let n = (self.opcode & 0x000F) as usize;
 
-        for (index, line) in self.display.screen_memory[y..n + y].iter_mut().enumerate() {
+        for (index, line) in self.display.screen_memory[y..(n + y)].iter_mut().enumerate() {
             let address = self.vi + index as u16;
 
             let sprite = (if address >= MEM_OFFSET {
