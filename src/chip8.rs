@@ -115,9 +115,9 @@ impl Chip8 {
         mask = 0xF0FF;
 
         match self.opcode & mask {
-            0xF007 => println!("LD Vx, DT"),
+            0xF007 => self.load_from_dt(),
             0xF00A => println!("LD Vx, K"),
-            0xF015 => println!("LD DT, Vx"),
+            0xF015 => self.load_to_dt(),
             0xF018 => println!("LD ST, Vx"),
             0xF01E => println!("ADD I, Vx"),
             0xF029 => self.set_font_character(),
@@ -146,9 +146,21 @@ impl Chip8 {
     }
 
     /* opcode functions (might change(?)) */
+    fn load_from_dt(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+        self.registers[vx as usize] = self.delay_timer;
+    }
+
+    fn load_to_dt(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+        self.delay_timer = self.registers[vx as usize];
+    }
+
     fn set_font_character(&mut self) {
-        let x = (self.opcode & 0x0F00) >> 8;
-        self.vi = x;
+        let vx = (self.opcode & 0x0F00) >> 8;
+        let x = self.registers[vx as usize];
+
+        self.vi = (x * 5) as u16;
     }
 
     fn load_to_memory(&mut self) {
