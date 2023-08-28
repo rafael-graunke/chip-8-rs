@@ -231,6 +231,7 @@ impl Chip8 {
     fn call_subroutine(&mut self) {
         self.stack.push(self.pc);
         self.pc = (self.opcode & 0x0FFF) - MEM_OFFSET;
+        self.did_jump = true;
     }
 
     fn return_subroutine(&mut self) {
