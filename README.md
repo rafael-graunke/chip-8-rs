@@ -32,6 +32,7 @@ cargo run -- <path> <ipf>
 ## Current State
 
 The following checklist shows a bit of the progress and current state of the emulator.
+Currently working on quirks and bug fixes.
 
 - [x] Memory, stack, registers and PC;
 - [x] ROM reading;
@@ -40,5 +41,5 @@ The following checklist shows a bit of the progress and current state of the emu
 - [x] OpCode matching;
 - [x] Display to screen;
 - [x] Basic OpCodes (for IBM logo e.g.);
-- [ ] All OpCodes;
+- [x] All OpCodes;
 - [ ] Quirk configurability.

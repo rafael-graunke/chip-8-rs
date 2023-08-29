@@ -36,6 +36,12 @@ impl AudioCallback for SquareWave {
     }
 }
 
+struct Quirks {
+    increment_index: bool,
+    shifting: bool,
+    jumping: bool,
+}
+
 pub struct Chip8<'a> {
     memory: Vec<u8>,
     stack: Vec<u16>,
@@ -50,6 +56,7 @@ pub struct Chip8<'a> {
     sound_timer: u8,
     sound_device: AudioDevice<SquareWave>,
     event_pump: &'a mut EventPump,
+    quirks: Quirks,
     should_draw: bool,
 }
 
@@ -124,6 +131,11 @@ impl Chip8<'_> {
             did_jump: false,
             should_wait: false,
             event_pump: event_pump,
+            quirks: Quirks {
+                increment_index: true,
+                shifting: true,
+                jumping: true,
+            },
             should_draw: false,
         }
     }
@@ -245,7 +257,12 @@ impl Chip8<'_> {
     }
 
     fn jump_with_offset(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let mut vx = (self.opcode & 0x0F00) >> 8;
+
+        if self.quirks.jumping {
+            vx = 0;
+        }
+
         let address = (self.opcode & 0x0FFF) + self.registers[vx as usize] as u16;
 
         self.pc = address;
@@ -378,6 +395,10 @@ impl Chip8<'_> {
             let mem_address = self.vi + i;
             self.memory[mem_address as usize] = self.registers[i as usize];
         }
+
+        if self.quirks.increment_index {
+            self.vi += x + 1;
+        }
     }
 
     fn load_from_memory(&mut self) {
@@ -409,6 +430,7 @@ impl Chip8<'_> {
 
         let operation = self.opcode & 0x000F;
 
+        self.registers[0xF] = 0;
         self.registers[vx] = match operation {
             0 => y,
             1 => x | y,
@@ -418,12 +440,20 @@ impl Chip8<'_> {
             5 => self.subtract_overflow(x, y),
             6 => {
                 self.registers[0xF] = x & 1;
-                x >> 1
+                if self.quirks.shifting {
+                    y >> 1
+                } else {
+                    x >> 1
+                }
             }
             7 => self.subtract_overflow(y, x),
             0xE => {
                 self.registers[0xF] = (x & 0x80) >> 7;
-                x << 1
+                if self.quirks.shifting {
+                    y << 1
+                } else {
+                    x << 1
+                }
             }
             _ => 0,
         }
