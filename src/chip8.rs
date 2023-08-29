@@ -84,7 +84,7 @@ impl Chip8<'_> {
             0xF0, 0x80, 0xF0, 0x80, 0x80, // F
         ];
 
-        let mut memory = vec![1u8; 4096];
+        let mut memory = vec![0u8; 4096];
 
         for (index, byte) in font_data.iter().enumerate() {
             let address = index + FONT_OFFSET as usize;
