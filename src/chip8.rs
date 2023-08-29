@@ -165,7 +165,7 @@ impl Chip8<'_> {
             0x8000 => self.logic_op(),
             0x9000 => self.skip_register_not_equal(),
             0xA000 => self.set_vi(),
-            0xB000 => println!("JP V0, addr"), // make it configurable
+            0xB000 => self.jump_with_offset(), // quirks
             0xC000 => self.random_number(),
             0xD000 => self.draw(),
             _ => {}
@@ -242,6 +242,14 @@ impl Chip8<'_> {
         }
 
         running
+    }
+
+    fn jump_with_offset(&mut self) {
+        let vx = (self.opcode & 0x0F00) >> 8;
+        let address = (self.opcode & 0x0FFF) + self.registers[vx as usize] as u16;
+
+        self.pc = address;
+        self.did_jump = true;
     }
 
     fn add_to_index(&mut self) {
@@ -559,6 +567,8 @@ impl Chip8<'_> {
 
         let n = (self.opcode & 0x000F) as usize;
 
+        self.registers[0xF] = 0;
+
         for index in 0..n {
             let line =
                 &mut self.display.screen_memory[(y + index) & (SCREEN_HEIGHT as u8 - 1) as usize];
@@ -571,9 +581,13 @@ impl Chip8<'_> {
 
             let new_line = *line ^ offset_sprite;
 
-            /* Set VF to 1 if flips bit to off */
-            if new_line < *line {
-                self.registers[0xF] = 1;
+            for bit in 0..SCREEN_WIDTH {
+                let bit_before = *line & (0x8000000000000000 >> bit);
+                let bit_after = new_line & (0x8000000000000000 >> bit);
+
+                if (bit_before != bit_after) && (bit_before >> (SCREEN_WIDTH - 1 - bit)) == 1 {
+                    self.registers[0xF] = 1;
+                }
             }
 
             *line = new_line;
