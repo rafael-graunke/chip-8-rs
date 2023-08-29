@@ -2,15 +2,17 @@ use rand::Rng;
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Scancode};
-use sdl2::sys::{KeyCode, KeyPress};
 use sdl2::{EventPump, Sdl};
 use std::collections::HashMap;
+use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
 
 use crate::screen::{Display, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 const MEM_OFFSET: u16 = 0x200;
+const FONT_OFFSET: u16 = 0x50;
+const DEBUG: bool = true;
 
 struct SquareWave {
     phase_inc: f32,
@@ -39,16 +41,26 @@ pub struct Chip8<'a> {
     stack: Vec<u16>,
     display: Display,
     registers: [u8; 16],
-    fonts: [u8; 80],
     opcode: u16,
     vi: u16,
     pc: u16,
     did_jump: bool,
+    should_wait: bool,
     delay_timer: u8,
     sound_timer: u8,
     sound_device: AudioDevice<SquareWave>,
     event_pump: &'a mut EventPump,
-    pub should_draw: bool,
+    should_draw: bool,
+}
+
+impl fmt::Debug for Chip8<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "PC: {:#06x}\nVI: {:#06x}\nOPCODE: {:#06x}\nREGISTERS: {:?}\nSTACK: {:?}\n",
+            self.pc, self.vi, self.opcode, self.registers, self.stack
+        )
+    }
 }
 
 impl Chip8<'_> {
@@ -72,6 +84,13 @@ impl Chip8<'_> {
             0xF0, 0x80, 0xF0, 0x80, 0x80, // F
         ];
 
+        let mut memory = vec![1u8; 4096];
+
+        for (index, byte) in font_data.iter().enumerate() {
+            let address = index + FONT_OFFSET as usize;
+            memory[address] = *byte;
+        }
+
         let audio_subsystem = sdl.audio().unwrap();
 
         let desired_spec = AudioSpecDesired {
@@ -92,18 +111,18 @@ impl Chip8<'_> {
             .unwrap();
 
         Chip8 {
-            memory: vec![],
+            memory: memory,
             stack: vec![],
             display: Display::new(&sdl),
             registers: [0u8; 16],
-            fonts: font_data,
             opcode: 0u16,
             vi: 0u16,
-            pc: 0u16,
+            pc: MEM_OFFSET,
             delay_timer: 0u8,
             sound_timer: 0u8,
             sound_device: device,
             did_jump: false,
+            should_wait: false,
             event_pump: event_pump,
             should_draw: false,
         }
@@ -113,6 +132,11 @@ impl Chip8<'_> {
         let mut file = File::open(&path).unwrap();
         let mut data = Vec::new();
         file.read_to_end(&mut data).unwrap();
+
+        for (index, byte) in data.iter_mut().enumerate() {
+            let address = index + MEM_OFFSET as usize;
+            self.memory[address] = *byte;
+        }
 
         self.memory.append(&mut data); // loads rom to ram
     }
@@ -178,14 +202,20 @@ impl Chip8<'_> {
     pub fn step(&mut self, ipf: u32) -> bool {
         let mut running = true;
 
-        for event in self.event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => running = false,
-                _ => {}
+        if DEBUG {
+            println!("{:?}", self);
+        }
+
+        if !self.should_wait {
+            for event in self.event_pump.poll_iter() {
+                match event {
+                    Event::Quit { .. }
+                    | Event::KeyDown {
+                        keycode: Some(Keycode::Escape),
+                        ..
+                    } => running = false,
+                    _ => {}
+                }
             }
         }
 
@@ -193,7 +223,7 @@ impl Chip8<'_> {
             self.update_opcode();
             self.run_opcode();
 
-            if !self.did_jump {
+            if !self.did_jump && !self.should_wait {
                 self.pc += 2;
             };
 
@@ -219,31 +249,40 @@ impl Chip8<'_> {
         self.vi += self.registers[vx as usize] as u16;
     }
 
+    fn key_map(key: u8) -> Scancode {
+        let key_mapping = HashMap::from([
+            (0x1, Scancode::Num1),
+            (0x2, Scancode::Num2),
+            (0x3, Scancode::Num3),
+            (0xC, Scancode::Num4),
+            (0x4, Scancode::Q),
+            (0x5, Scancode::W),
+            (0x6, Scancode::E),
+            (0xD, Scancode::R),
+            (0x7, Scancode::A),
+            (0x8, Scancode::S),
+            (0x9, Scancode::D),
+            (0xE, Scancode::F),
+            (0xA, Scancode::Z),
+            (0x0, Scancode::X),
+            (0xB, Scancode::C),
+            (0xF, Scancode::V),
+        ]);
+
+        *key_mapping.get(&key).unwrap()
+    }
+
     fn skip_if_key(&mut self) {
         let vx = (self.opcode & 0x0F00) >> 8;
 
-        let key_mapping = HashMap::from([
-            (0, Scancode::Num1),
-            (1, Scancode::Num2),
-            (2, Scancode::Num3),
-            (3, Scancode::Num4),
-            (4, Scancode::Q),
-            (5, Scancode::W),
-            (6, Scancode::E),
-            (7, Scancode::R),
-            (8, Scancode::A),
-            (9, Scancode::S),
-            (10, Scancode::D),
-            (11, Scancode::F),
-            (12, Scancode::Z),
-            (13, Scancode::X),
-            (14, Scancode::C),
-            (15, Scancode::V),
-        ]);
+        let key = Chip8::key_map(self.registers[vx as usize]);
 
-        let key = key_mapping.get(&self.registers[vx as usize]).unwrap();
-
-        if self.event_pump.keyboard_state().pressed_scancodes().any(|x| x == *key) {
+        if self
+            .event_pump
+            .keyboard_state()
+            .pressed_scancodes()
+            .any(|x| x == key)
+        {
             self.pc += 2;
         };
     }
@@ -251,117 +290,58 @@ impl Chip8<'_> {
     fn skip_if_not_key(&mut self) {
         let vx = (self.opcode & 0x0F00) >> 8;
 
-        let key_mapping = HashMap::from([
-            (0, Scancode::Num1),
-            (1, Scancode::Num2),
-            (2, Scancode::Num3),
-            (3, Scancode::Num4),
-            (4, Scancode::Q),
-            (5, Scancode::W),
-            (6, Scancode::E),
-            (7, Scancode::R),
-            (8, Scancode::A),
-            (9, Scancode::S),
-            (10, Scancode::D),
-            (11, Scancode::F),
-            (12, Scancode::Z),
-            (13, Scancode::X),
-            (14, Scancode::C),
-            (15, Scancode::V),
-        ]);
+        let key = Chip8::key_map(self.registers[vx as usize]);
 
-        let key = key_mapping.get(&self.registers[vx as usize]).unwrap();
-
-        if self.event_pump.keyboard_state().pressed_scancodes().all(|x| x != *key) {
+        if self
+            .event_pump
+            .keyboard_state()
+            .pressed_scancodes()
+            .all(|x| x != key)
+        {
             self.pc += 2;
         };
     }
 
     fn wait_for_input(&mut self) {
+        self.should_wait = true;
         let vx = (self.opcode & 0x0F00) >> 8;
 
-        let mut key_pressed = false;
+        let key_mapping = HashMap::from([
+            (Keycode::Num1, 0x1),
+            (Keycode::Num2, 0x2),
+            (Keycode::Num3, 0x3),
+            (Keycode::Num4, 0xC),
+            (Keycode::Q, 0x4),
+            (Keycode::W, 0x5),
+            (Keycode::E, 0x6),
+            (Keycode::R, 0xD),
+            (Keycode::A, 0x7),
+            (Keycode::S, 0x8),
+            (Keycode::D, 0x9),
+            (Keycode::F, 0xE),
+            (Keycode::Z, 0xA),
+            (Keycode::X, 0x0),
+            (Keycode::C, 0xB),
+            (Keycode::V, 0xF),
+        ]);
 
-        while !key_pressed {
-            for event in self.event_pump.poll_iter() {
-                let key = match event {
-                    Event::KeyUp {
-                        keycode: Some(Keycode::Num1),
-                        ..
-                    } => Some(0),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::Num2),
-                        ..
-                    } => Some(1),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::Num3),
-                        ..
-                    } => Some(2),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::Num4),
-                        ..
-                    } => Some(3),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::Q),
-                        ..
-                    } => Some(4),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::W),
-                        ..
-                    } => Some(5),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::E),
-                        ..
-                    } => Some(6),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::R),
-                        ..
-                    } => Some(7),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::A),
-                        ..
-                    } => Some(8),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::S),
-                        ..
-                    } => Some(9),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::D),
-                        ..
-                    } => Some(10),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::F),
-                        ..
-                    } => Some(11),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::Z),
-                        ..
-                    } => Some(12),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::X),
-                        ..
-                    } => Some(13),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::C),
-                        ..
-                    } => Some(14),
-                    Event::KeyUp {
-                        keycode: Some(Keycode::V),
-                        ..
-                    } => Some(15),
-                    _ => None,
-                };
-
-                match key {
-                    Some(n) => {
-                        self.registers[vx as usize] = n as u8;
-                        key_pressed = true;
+        for event in self.event_pump.poll_iter() {
+            match event {
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => match key_mapping.get(&keycode) {
+                    Some(key) => {
+                        self.registers[vx as usize] = *key;
+                        self.should_wait = false;
                     }
-                    None => {}
-                }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
+
     fn load_from_dt(&mut self) {
         let vx = (self.opcode & 0x0F00) >> 8;
         self.registers[vx as usize] = self.delay_timer;
@@ -380,15 +360,14 @@ impl Chip8<'_> {
     fn set_font_character(&mut self) {
         let vx = (self.opcode & 0x0F00) >> 8;
         let x = self.registers[vx as usize];
-
-        self.vi = (x * 5) as u16;
+        self.vi = FONT_OFFSET + (x * 5) as u16;
     }
 
     fn load_to_memory(&mut self) {
         let x = (self.opcode & 0x0F00) >> 8;
 
         for i in 0..=x {
-            let mem_address = (self.vi - MEM_OFFSET) + i;
+            let mem_address = self.vi + i;
             self.memory[mem_address as usize] = self.registers[i as usize];
         }
     }
@@ -397,7 +376,7 @@ impl Chip8<'_> {
         let x: u16 = (self.opcode & 0x0F00) >> 8;
 
         for i in 0..=x {
-            let mem_address = (self.vi - MEM_OFFSET) + i;
+            let mem_address = (self.vi) + i;
             self.registers[i as usize] = self.memory[mem_address as usize];
         }
     }
@@ -406,7 +385,7 @@ impl Chip8<'_> {
         let vx = (self.opcode & 0x0F00) >> 8;
         let x = self.registers[vx as usize];
 
-        let address = self.vi - MEM_OFFSET;
+        let address = self.vi;
 
         self.memory[(address) as usize] = x / 100;
         self.memory[(address + 1) as usize] = (x % 100) / 10;
@@ -427,11 +406,34 @@ impl Chip8<'_> {
             1 => x | y,
             2 => x & y,
             3 => x ^ y,
-            4 => (x as u16 + y as u16) as u8,
+            4 => self.sum_overflow(x, y),
             5 => self.subtract_overflow(x, y),
+            6 => {
+                self.registers[0xF] = x & 1;
+                x >> 1
+            }
             7 => self.subtract_overflow(y, x),
+            0xE => {
+                self.registers[0xF] = (x & 0x80) >> 7;
+                x << 1
+            }
             _ => 0,
         }
+    }
+
+    fn sum_overflow(&mut self, n1: u8, n2: u8) -> u8 {
+        let n1 = n1 as u16;
+        let n2 = n2 as u16;
+
+        let sum = n1 + n2;
+
+        if sum > 255 {
+            self.registers[0xF] = 1;
+        } else {
+            self.registers[0xF] = 0;
+        }
+
+        return sum as u8;
     }
 
     fn subtract_overflow(&mut self, n1: u8, n2: u8) -> u8 {
@@ -505,7 +507,7 @@ impl Chip8<'_> {
 
     fn call_subroutine(&mut self) {
         self.stack.push(self.pc);
-        self.pc = (self.opcode & 0x0FFF) - MEM_OFFSET;
+        self.pc = self.opcode & 0x0FFF;
         self.did_jump = true;
     }
 
@@ -518,7 +520,7 @@ impl Chip8<'_> {
     }
 
     fn jump(&mut self) {
-        self.pc = (self.opcode & 0x0FFF) - MEM_OFFSET;
+        self.pc = self.opcode & 0x0FFF;
         self.did_jump = true;
     }
 
@@ -532,9 +534,14 @@ impl Chip8<'_> {
         let index = (self.opcode & 0x0F00) >> 8;
         let value = self.opcode & 0x00FF;
 
-        let sum_overflow = value as u16 + self.registers[index as usize] as u16;
+        // This overflow does not affect F flag
+        let mut sum = value + self.registers[index as usize] as u16;
 
-        self.registers[index as usize] = sum_overflow as u8; // need to check doc for this overflow
+        if sum > 255 {
+            sum -= 256;
+        }
+
+        self.registers[index as usize] = sum as u8;
     }
 
     fn set_vi(&mut self) {
@@ -552,14 +559,13 @@ impl Chip8<'_> {
 
         let n = (self.opcode & 0x000F) as usize;
 
-        for (index, line) in self.display.screen_memory[y..(n + y)].iter_mut().enumerate() {
+        for index in 0..n {
+            let line =
+                &mut self.display.screen_memory[(y + index) & (SCREEN_HEIGHT as u8 - 1) as usize];
+
             let address = self.vi + index as u16;
 
-            let sprite = (if address >= MEM_OFFSET {
-                self.memory[(address - MEM_OFFSET) as usize]
-            } else {
-                self.fonts[(address) as usize]
-            }) as u64;
+            let sprite = self.memory[address as usize] as u64;
 
             let offset_sprite = sprite << (SCREEN_WIDTH - 8) >> x; // Fixes subtract overflow
 
