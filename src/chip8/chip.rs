@@ -9,78 +9,27 @@ use std::fs::File;
 use std::io::prelude::*;
 
 use crate::audio::SquareWave;
-use crate::screen::{Display, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::screen::{Screen, SCREEN_HEIGHT, SCREEN_WIDTH};
 
-use super::opcode::OpCode;
-use super::quirks::Quirks;
+use crate::chip8::opcode::OpCode;
+use crate::chip8::quirks::Quirks;
+use crate::chip8::state::ChipState;
 
 const MEM_OFFSET: u16 = 0x200;
 const FONT_OFFSET: u16 = 0x50;
 const DEBUG: bool = true;
 
 pub struct Chip8 {
-    memory: [u8; 4096],
-    stack: Vec<u16>,
-    display: Display,
-    registers: [u8; 16],
+    state: ChipState,
+    display: Screen,
     opcode: OpCode,
-    vi: u16,
-    pc: u16,
-    did_jump: bool,
-    should_wait: bool,
-    delay_timer: u8,
-    sound_timer: u8,
     sound_device: AudioDevice<SquareWave>,
     event_pump: EventPump,
     quirks: Quirks,
-    should_draw: bool,
-    running: bool,
-}
-
-impl fmt::Debug for Chip8 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "PC: {:#06x}\nVI: {:#06x}\nOPCODE: {:#06x}\nREGISTERS: {:?}\nSTACK: {:?}\n",
-            self.pc,
-            self.vi,
-            self.opcode.mask(0xFFFF),
-            self.registers,
-            self.stack
-        )
-    }
 }
 
 impl Chip8 {
     pub fn new() -> Chip8 {
-        // Initialize memory
-        let mut memory = [0u8; 4096];
-
-        // Iterate over fonts and add corresponding byte to address in memory
-        let font_data = [
-            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
-            0x20, 0x60, 0x20, 0x20, 0x70, // 1
-            0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
-            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
-            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
-            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
-            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
-            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
-            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
-            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
-            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
-            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
-            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
-            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
-            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
-            0xF0, 0x80, 0xF0, 0x80, 0x80, // F
-        ];
-
-        for (index, byte) in font_data.iter().enumerate() {
-            let address = index + FONT_OFFSET as usize;
-            memory[address] = *byte;
-        }
-
         // Initialize SDL2 and Event Pump
         let sdl_context = sdl2::init().unwrap();
         let event_pump = sdl_context.event_pump().unwrap();
@@ -103,22 +52,12 @@ impl Chip8 {
 
         // Return new instance
         Chip8 {
-            running: true,
-            memory: memory,
-            stack: vec![],
-            display: Display::new(&sdl_context),
-            registers: [0u8; 16],
+            state: ChipState::init(),
+            display: Screen::new(&sdl_context),
             opcode: OpCode::init(),
-            vi: 0u16,
-            pc: MEM_OFFSET,
-            delay_timer: 0u8,
-            sound_timer: 0u8,
             sound_device: device,
-            did_jump: false,
-            should_wait: false,
             event_pump: event_pump,
             quirks: Quirks::for_chip8(),
-            should_draw: false,
         }
     }
 
@@ -129,19 +68,28 @@ impl Chip8 {
 
         for (index, byte) in data.iter_mut().enumerate() {
             let address = index + MEM_OFFSET as usize;
-            self.memory[address] = *byte;
+            self.state.memory[address] = *byte;
         }
     }
 
     pub fn render(&mut self) {
-        if self.should_draw {
+        if self.state.should_draw {
             self.display.render();
-            self.should_draw = false;
+            self.state.should_draw = false;
         };
     }
 
     pub fn is_running(&self) -> bool {
-        self.running
+        self.state.running
+    }
+
+    fn fetch_opcode(&mut self) {
+        let first_byte = self.state.memory[self.state.pc as usize] as u16;
+        let second_byte = self.state.memory[(self.state.pc + 1) as usize] as u16;
+
+        let new_code = (first_byte << 8) | second_byte;
+
+        self.opcode.set(new_code);
     }
 
     fn run_opcode(&mut self) {
@@ -189,7 +137,7 @@ impl Chip8 {
 
     pub fn step(&mut self, ipf: u32) {
         // If not waiting for input key
-        if !self.should_wait {
+        if !self.state.should_wait {
             // Check events, if exit then set running to false
             for event in self.event_pump.poll_iter() {
                 match event {
@@ -197,7 +145,7 @@ impl Chip8 {
                     | Event::KeyDown {
                         keycode: Some(Keycode::Escape),
                         ..
-                    } => self.running = false,
+                    } => self.state.running = false,
                     _ => {}
                 }
             }
@@ -205,25 +153,25 @@ impl Chip8 {
 
         // Run N instructions per seconds
         for _ in 0..ipf {
-            self.opcode.update(self.pc as usize, &self.memory);
+            self.fetch_opcode();
             self.run_opcode();
 
-            if !self.did_jump && !self.should_wait {
-                self.pc += 2;
+            if !self.state.did_jump && !self.state.should_wait {
+                self.state.pc += 2;
             };
 
-            self.did_jump = false;
+            self.state.did_jump = false;
         }
 
         // Decrease delay timer
-        if self.delay_timer > 0 {
-            self.delay_timer -= 1;
+        if self.state.delay_timer > 0 {
+            self.state.delay_timer -= 1;
         }
 
         // Decrese sound timer and play sound until reach zero
-        if self.sound_timer > 0 {
+        if self.state.sound_timer > 0 {
             self.sound_device.resume();
-            self.sound_timer -= 1;
+            self.state.sound_timer -= 1;
         } else {
             self.sound_device.pause();
         }
@@ -232,7 +180,7 @@ impl Chip8 {
         self.render();
 
         if DEBUG {
-            println!("{:?}", self);
+            println!("{:?}", self.state);
         };
     }
 
@@ -243,15 +191,15 @@ impl Chip8 {
             vx = 0;
         }
 
-        let address = self.opcode.get_3n() + self.registers[vx as usize] as u16;
+        let address = self.opcode.get_3n() + self.state.registers[vx as usize] as u16;
 
-        self.pc = address;
-        self.did_jump = true;
+        self.state.pc = address;
+        self.state.did_jump = true;
     }
 
     fn add_to_index(&mut self) {
         let vx = self.opcode.get_x();
-        self.vi += self.registers[vx as usize] as u16;
+        self.state.vi += self.state.registers[vx as usize] as u16;
     }
 
     fn key_map(key: u8) -> Scancode {
@@ -280,7 +228,7 @@ impl Chip8 {
     fn skip_if_key(&mut self) {
         let vx = self.opcode.get_x();
 
-        let key = Chip8::key_map(self.registers[vx as usize]);
+        let key = Chip8::key_map(self.state.registers[vx as usize]);
 
         if self
             .event_pump
@@ -288,14 +236,14 @@ impl Chip8 {
             .pressed_scancodes()
             .any(|x| x == key)
         {
-            self.pc += 2;
+            self.state.pc += 2;
         };
     }
 
     fn skip_if_not_key(&mut self) {
         let vx = self.opcode.get_x();
 
-        let key = Chip8::key_map(self.registers[vx as usize]);
+        let key = Chip8::key_map(self.state.registers[vx as usize]);
 
         if self
             .event_pump
@@ -303,12 +251,12 @@ impl Chip8 {
             .pressed_scancodes()
             .all(|x| x != key)
         {
-            self.pc += 2;
+            self.state.pc += 2;
         };
     }
 
     fn wait_for_input(&mut self) {
-        self.should_wait = true;
+        self.state.should_wait = true;
         let vx = self.opcode.get_x();
 
         let key_mapping = HashMap::from([
@@ -337,8 +285,8 @@ impl Chip8 {
                     ..
                 } => match key_mapping.get(&keycode) {
                     Some(key) => {
-                        self.registers[vx as usize] = *key;
-                        self.should_wait = false;
+                        self.state.registers[vx as usize] = *key;
+                        self.state.should_wait = false;
                     }
                     _ => {}
                 },
@@ -349,35 +297,35 @@ impl Chip8 {
 
     fn load_from_dt(&mut self) {
         let vx = self.opcode.get_x();
-        self.registers[vx as usize] = self.delay_timer;
+        self.state.registers[vx as usize] = self.state.delay_timer;
     }
 
     fn load_to_dt(&mut self) {
         let vx = self.opcode.get_x();
-        self.delay_timer = self.registers[vx as usize];
+        self.state.delay_timer = self.state.registers[vx as usize];
     }
 
     fn load_to_st(&mut self) {
         let vx = self.opcode.get_x();
-        self.sound_timer = self.registers[vx as usize];
+        self.state.sound_timer = self.state.registers[vx as usize];
     }
 
     fn set_font_character(&mut self) {
         let vx = self.opcode.get_x();
-        let x = self.registers[vx as usize];
-        self.vi = FONT_OFFSET + (x * 5) as u16;
+        let x = self.state.registers[vx as usize];
+        self.state.vi = FONT_OFFSET + (x * 5) as u16;
     }
 
     fn load_to_memory(&mut self) {
         let x = self.opcode.get_x() as u16;
 
         for i in 0..=x {
-            let mem_address = self.vi + i;
-            self.memory[mem_address as usize] = self.registers[i as usize];
+            let mem_address = self.state.vi + i;
+            self.state.memory[mem_address as usize] = self.state.registers[i as usize];
         }
 
         if self.quirks.has_increment_index() {
-            self.vi += x + 1;
+            self.state.vi += x + 1;
         }
     }
 
@@ -385,33 +333,33 @@ impl Chip8 {
         let x = self.opcode.get_x() as u16;
 
         for i in 0..=x {
-            let mem_address = (self.vi) + i;
-            self.registers[i as usize] = self.memory[mem_address as usize];
+            let mem_address = (self.state.vi) + i;
+            self.state.registers[i as usize] = self.state.memory[mem_address as usize];
         }
     }
 
     fn binary_coded_decimal(&mut self) {
         let vx = self.opcode.get_x();
-        let x = self.registers[vx as usize];
+        let x = self.state.registers[vx as usize];
 
-        let address = self.vi;
+        let address = self.state.vi;
 
-        self.memory[(address) as usize] = x / 100;
-        self.memory[(address + 1) as usize] = (x % 100) / 10;
-        self.memory[(address + 2) as usize] = x % 10;
+        self.state.memory[(address) as usize] = x / 100;
+        self.state.memory[(address + 1) as usize] = (x % 100) / 10;
+        self.state.memory[(address + 2) as usize] = x % 10;
     }
 
     fn logic_op(&mut self) {
         let vx = self.opcode.get_x() as usize;
-        let x = self.registers[vx];
+        let x = self.state.registers[vx];
 
         let vy = self.opcode.get_y();
-        let y = self.registers[vy as usize];
+        let y = self.state.registers[vy as usize];
 
         let operation = self.opcode.get_n();
 
-        self.registers[0xF] = 0;
-        self.registers[vx] = match operation {
+        self.state.registers[0xF] = 0;
+        self.state.registers[vx] = match operation {
             0 => y,
             1 => x | y,
             2 => x & y,
@@ -419,7 +367,7 @@ impl Chip8 {
             4 => self.sum_overflow(x, y),
             5 => self.subtract_overflow(x, y),
             6 => {
-                self.registers[0xF] = x & 1;
+                self.state.registers[0xF] = x & 1;
                 if self.quirks.has_shifting() {
                     y >> 1
                 } else {
@@ -428,7 +376,7 @@ impl Chip8 {
             }
             7 => self.subtract_overflow(y, x),
             0xE => {
-                self.registers[0xF] = (x & 0x80) >> 7;
+                self.state.registers[0xF] = (x & 0x80) >> 7;
                 if self.quirks.has_shifting() {
                     y << 1
                 } else {
@@ -446,9 +394,9 @@ impl Chip8 {
         let sum = n1 + n2;
 
         if sum > 255 {
-            self.registers[0xF] = 1;
+            self.state.registers[0xF] = 1;
         } else {
-            self.registers[0xF] = 0;
+            self.state.registers[0xF] = 0;
         }
 
         return sum as u8;
@@ -458,14 +406,14 @@ impl Chip8 {
         let mut n1 = n1 as u16;
         let n2 = n2 as u16;
 
-        if n1 >= n2 {
-            self.registers[0xF] = 1;
-            (n1 - n2) as u8
-        } else {
-            self.registers[0xF] = 0;
+        self.state.registers[0xF] = 1;
+
+        if n1 < n2 {
+            self.state.registers[0xF] = 0;
             n1 |= 0x100;
-            (n1 - n2) as u8
         }
+
+        (n1 - n2) as u8
     }
 
     fn random_number(&mut self) {
@@ -476,61 +424,61 @@ impl Chip8 {
         let nn: u8 = self.opcode.get_2n() as u8;
         let random: u8 = rng.gen();
 
-        self.registers[vx] = random & nn;
+        self.state.registers[vx] = random & nn;
     }
 
     fn skip_equal(&mut self) {
         let vx = self.opcode.get_x() as usize;
-        let x = self.registers[vx];
+        let x = self.state.registers[vx];
 
         let value = self.opcode.get_2n();
         if x == value {
-            self.pc += 2;
+            self.state.pc += 2;
         }
     }
 
     fn skip_not_equal(&mut self) {
         let vx = self.opcode.get_x() as usize;
-        let x = self.registers[vx];
+        let x = self.state.registers[vx];
 
         let value = self.opcode.get_2n();
         if x != value {
-            self.pc += 2;
+            self.state.pc += 2;
         }
     }
 
     fn skip_register_equal(&mut self) {
         let vx = self.opcode.get_x() as usize;
-        let x = self.registers[vx];
+        let x = self.state.registers[vx];
 
         let vy = self.opcode.get_y() as usize;
-        let y = self.registers[vy];
+        let y = self.state.registers[vy];
 
         if x == y {
-            self.pc += 2;
+            self.state.pc += 2;
         }
     }
 
     fn skip_register_not_equal(&mut self) {
         let vx = self.opcode.get_x() as usize;
-        let x = self.registers[vx];
+        let x = self.state.registers[vx];
 
         let vy = self.opcode.get_y() as usize;
-        let y = self.registers[vy];
+        let y = self.state.registers[vy];
 
         if x != y {
-            self.pc += 2;
+            self.state.pc += 2;
         }
     }
 
     fn call_subroutine(&mut self) {
-        self.stack.push(self.pc);
-        self.pc = self.opcode.get_3n();
-        self.did_jump = true;
+        self.state.stack.push(self.state.pc);
+        self.state.pc = self.opcode.get_3n();
+        self.state.did_jump = true;
     }
 
     fn return_subroutine(&mut self) {
-        self.pc = self.stack.pop().unwrap();
+        self.state.pc = self.state.stack.pop().unwrap();
     }
 
     fn clear_screen(&mut self) {
@@ -538,14 +486,14 @@ impl Chip8 {
     }
 
     fn jump(&mut self) {
-        self.pc = self.opcode.get_3n();
-        self.did_jump = true;
+        self.state.pc = self.opcode.get_3n();
+        self.state.did_jump = true;
     }
 
     fn load_register(&mut self) {
         let index = self.opcode.get_x();
         let value = self.opcode.get_2n();
-        self.registers[index as usize] = value as u8;
+        self.state.registers[index as usize] = value as u8;
     }
 
     fn add_to_register(&mut self) {
@@ -553,39 +501,39 @@ impl Chip8 {
         let value = self.opcode.get_2n();
 
         // This overflow does not affect F flag
-        let mut sum = value as u16 + self.registers[index as usize] as u16;
+        let mut sum = value as u16 + self.state.registers[index as usize] as u16;
 
         if sum > 255 {
             sum -= 256;
         }
 
-        self.registers[index as usize] = sum as u8;
+        self.state.registers[index as usize] = sum as u8;
     }
 
     fn set_vi(&mut self) {
-        self.vi = self.opcode.get_3n();
+        self.state.vi = self.opcode.get_3n();
     }
 
     fn draw(&mut self) {
-        self.should_draw = true;
+        self.state.should_draw = true;
 
         let vx = self.opcode.get_x() as usize;
         let vy = self.opcode.get_y() as usize;
 
-        let x = self.registers[vx] & (SCREEN_WIDTH - 1);
-        let y = (self.registers[vy] & (SCREEN_HEIGHT as u8 - 1)) as usize;
+        let x = self.state.registers[vx] & (SCREEN_WIDTH - 1);
+        let y = (self.state.registers[vy] & (SCREEN_HEIGHT as u8 - 1)) as usize;
 
         let n = self.opcode.get_n() as usize;
 
-        self.registers[0xF] = 0;
+        self.state.registers[0xF] = 0;
 
         for index in 0..n {
             let line =
                 &mut self.display.screen_memory[(y + index) & (SCREEN_HEIGHT as u8 - 1) as usize];
 
-            let address = self.vi + index as u16;
+            let address = self.state.vi + index as u16;
 
-            let sprite = self.memory[address as usize] as u64;
+            let sprite = self.state.memory[address as usize] as u64;
 
             let offset_sprite = sprite << (SCREEN_WIDTH - 8) >> x;
 
@@ -596,7 +544,7 @@ impl Chip8 {
                 let bit_after = new_line & (0x8000000000000000 >> bit);
 
                 if (bit_before != bit_after) && (bit_before >> (SCREEN_WIDTH - 1 - bit)) == 1 {
-                    self.registers[0xF] = 1;
+                    self.state.registers[0xF] = 1;
                 }
             }
 

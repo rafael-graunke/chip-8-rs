@@ -8,12 +8,12 @@ pub const SCREEN_WIDTH: u8 = 64;
 pub const SCREEN_HEIGHT: usize = 32;
 pub const PIXEL_SCALE: usize = 20;
 
-pub struct Display {
+pub struct Screen {
     pub screen_memory: [u64; SCREEN_HEIGHT],
     pub canvas: Canvas<Window>,
 }
 
-impl Display {
+impl Screen {
     fn init_canvas(sdl: &Sdl) -> Canvas<Window> {
         let video_subsystem = sdl.video().unwrap();
 
@@ -41,10 +41,10 @@ impl Display {
         canvas
     }
 
-    pub fn new(sdl: &Sdl) -> Display {
-        Display {
+    pub fn new(sdl: &Sdl) -> Screen {
+        Screen {
             screen_memory: [0u64; SCREEN_HEIGHT],
-            canvas: Display::init_canvas(sdl),
+            canvas: Screen::init_canvas(sdl),
         }
     }
 

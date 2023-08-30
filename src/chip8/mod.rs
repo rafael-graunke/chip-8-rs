@@ -1,3 +1,4 @@
 pub mod chip;
-mod opcode;
+mod opcodes;
 mod quirks;
+mod state;
