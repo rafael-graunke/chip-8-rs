@@ -2,7 +2,7 @@ use rand::Rng;
 use sdl2::audio::{AudioDevice, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Scancode};
-use sdl2::{EventPump, Sdl};
+use sdl2::EventPump;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::File;
@@ -37,6 +37,7 @@ pub struct Chip8 {
     event_pump: EventPump,
     quirks: Quirks,
     should_draw: bool,
+    running: bool,
 }
 
 impl fmt::Debug for Chip8 {
@@ -101,6 +102,7 @@ impl Chip8 {
 
         // Return new instance
         Chip8 {
+            running: true,
             memory: memory,
             stack: vec![],
             display: Display::new(&sdl_context),
@@ -132,24 +134,28 @@ impl Chip8 {
             let address = index + MEM_OFFSET as usize;
             self.memory[address] = *byte;
         }
-
-        self.memory.append(&mut data); // loads rom to ram
     }
 
     pub fn render(&mut self) {
-        self.display.render();
+        if self.should_draw {
+            self.display.render();
+            self.should_draw = false;
+        };
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running
     }
 
     fn update_opcode(&mut self) {
+        // Set opcode to opcode in memory at PC
         self.opcode = (self.memory[self.pc as usize] as u16) << 8
             | (self.memory[(self.pc + 1) as usize] as u16);
     }
 
     fn run_opcode(&mut self) {
-        // for single nibble determinant
-        let mut mask = 0xF000;
-
-        match self.opcode & mask {
+        // Check single nibble determinant opcodes
+        match self.opcode & 0xF000 {
             0x1000 => self.jump(),
             0x2000 => self.call_subroutine(),
             0x3000 => self.skip_equal(),
@@ -166,10 +172,8 @@ impl Chip8 {
             _ => {}
         }
 
-        // for dual nibble determinant
-        mask = 0xF00F;
-
-        match self.opcode & mask {
+        // Check dual nibble determinant opcodes
+        match self.opcode & 0xF00F {
             0x0000 => self.clear_screen(),
             0x000E => self.return_subroutine(),
             0xE00E => self.skip_if_key(),
@@ -177,10 +181,8 @@ impl Chip8 {
             _ => {}
         }
 
-        //for F codes
-        mask = 0xF0FF;
-
-        match self.opcode & mask {
+        // Check F opcodes
+        match self.opcode & 0xF0FF {
             0xF007 => self.load_from_dt(),
             0xF00A => self.wait_for_input(),
             0xF015 => self.load_to_dt(),
@@ -194,26 +196,23 @@ impl Chip8 {
         }
     }
 
-    pub fn step(&mut self, ipf: u32) -> bool {
-        let mut running = true;
-
-        if DEBUG {
-            println!("{:?}", self);
-        }
-
+    pub fn step(&mut self, ipf: u32) {
+        // If not waiting for input key
         if !self.should_wait {
+            // Check events, if exit then set running to false
             for event in self.event_pump.poll_iter() {
                 match event {
                     Event::Quit { .. }
                     | Event::KeyDown {
                         keycode: Some(Keycode::Escape),
                         ..
-                    } => running = false,
+                    } => self.running = false,
                     _ => {}
                 }
             }
         }
 
+        // Run N instructions per seconds
         for _ in 0..ipf {
             self.update_opcode();
             self.run_opcode();
@@ -225,10 +224,12 @@ impl Chip8 {
             self.did_jump = false;
         }
 
+        // Decrease delay timer
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
         }
 
+        // Decrese sound timer and play sound until reach zero
         if self.sound_timer > 0 {
             self.sound_device.resume();
             self.sound_timer -= 1;
@@ -236,7 +237,12 @@ impl Chip8 {
             self.sound_device.pause();
         }
 
-        running
+        // Render frame
+        self.render();
+
+        if DEBUG {
+            println!("{:?}", self);
+        };
     }
 
     fn jump_with_offset(&mut self) {
