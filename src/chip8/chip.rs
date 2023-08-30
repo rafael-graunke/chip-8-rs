@@ -11,22 +11,19 @@ use std::io::prelude::*;
 use crate::audio::SquareWave;
 use crate::screen::{Display, SCREEN_HEIGHT, SCREEN_WIDTH};
 
+use super::opcode::OpCode;
+use super::quirks::Quirks;
+
 const MEM_OFFSET: u16 = 0x200;
 const FONT_OFFSET: u16 = 0x50;
 const DEBUG: bool = true;
 
-struct Quirks {
-    increment_index: bool,
-    shifting: bool,
-    jumping: bool,
-}
-
 pub struct Chip8 {
-    memory: Vec<u8>,
+    memory: [u8; 4096],
     stack: Vec<u16>,
     display: Display,
     registers: [u8; 16],
-    opcode: u16,
+    opcode: OpCode,
     vi: u16,
     pc: u16,
     did_jump: bool,
@@ -45,7 +42,11 @@ impl fmt::Debug for Chip8 {
         write!(
             f,
             "PC: {:#06x}\nVI: {:#06x}\nOPCODE: {:#06x}\nREGISTERS: {:?}\nSTACK: {:?}\n",
-            self.pc, self.vi, self.opcode, self.registers, self.stack
+            self.pc,
+            self.vi,
+            self.opcode.mask(0xFFFF),
+            self.registers,
+            self.stack
         )
     }
 }
@@ -53,7 +54,7 @@ impl fmt::Debug for Chip8 {
 impl Chip8 {
     pub fn new() -> Chip8 {
         // Initialize memory
-        let mut memory = vec![0u8; 4096];
+        let mut memory = [0u8; 4096];
 
         // Iterate over fonts and add corresponding byte to address in memory
         let font_data = [
@@ -107,7 +108,7 @@ impl Chip8 {
             stack: vec![],
             display: Display::new(&sdl_context),
             registers: [0u8; 16],
-            opcode: 0u16,
+            opcode: OpCode::init(),
             vi: 0u16,
             pc: MEM_OFFSET,
             delay_timer: 0u8,
@@ -116,11 +117,7 @@ impl Chip8 {
             did_jump: false,
             should_wait: false,
             event_pump: event_pump,
-            quirks: Quirks {
-                increment_index: true,
-                shifting: true,
-                jumping: true,
-            },
+            quirks: Quirks::for_chip8(),
             should_draw: false,
         }
     }
@@ -147,15 +144,9 @@ impl Chip8 {
         self.running
     }
 
-    fn update_opcode(&mut self) {
-        // Set opcode to opcode in memory at PC
-        self.opcode = (self.memory[self.pc as usize] as u16) << 8
-            | (self.memory[(self.pc + 1) as usize] as u16);
-    }
-
     fn run_opcode(&mut self) {
         // Check single nibble determinant opcodes
-        match self.opcode & 0xF000 {
+        match self.opcode.mask(0xF000) {
             0x1000 => self.jump(),
             0x2000 => self.call_subroutine(),
             0x3000 => self.skip_equal(),
@@ -173,7 +164,7 @@ impl Chip8 {
         }
 
         // Check dual nibble determinant opcodes
-        match self.opcode & 0xF00F {
+        match self.opcode.mask(0xF00F) {
             0x0000 => self.clear_screen(),
             0x000E => self.return_subroutine(),
             0xE00E => self.skip_if_key(),
@@ -182,7 +173,7 @@ impl Chip8 {
         }
 
         // Check F opcodes
-        match self.opcode & 0xF0FF {
+        match self.opcode.mask(0xF0FF) {
             0xF007 => self.load_from_dt(),
             0xF00A => self.wait_for_input(),
             0xF015 => self.load_to_dt(),
@@ -214,7 +205,7 @@ impl Chip8 {
 
         // Run N instructions per seconds
         for _ in 0..ipf {
-            self.update_opcode();
+            self.opcode.update(self.pc as usize, &self.memory);
             self.run_opcode();
 
             if !self.did_jump && !self.should_wait {
@@ -246,20 +237,20 @@ impl Chip8 {
     }
 
     fn jump_with_offset(&mut self) {
-        let mut vx = (self.opcode & 0x0F00) >> 8;
+        let mut vx = self.opcode.get_x();
 
-        if self.quirks.jumping {
+        if self.quirks.has_jumping() {
             vx = 0;
         }
 
-        let address = (self.opcode & 0x0FFF) + self.registers[vx as usize] as u16;
+        let address = self.opcode.get_3n() + self.registers[vx as usize] as u16;
 
         self.pc = address;
         self.did_jump = true;
     }
 
     fn add_to_index(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
         self.vi += self.registers[vx as usize] as u16;
     }
 
@@ -287,7 +278,7 @@ impl Chip8 {
     }
 
     fn skip_if_key(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
 
         let key = Chip8::key_map(self.registers[vx as usize]);
 
@@ -302,7 +293,7 @@ impl Chip8 {
     }
 
     fn skip_if_not_key(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
 
         let key = Chip8::key_map(self.registers[vx as usize]);
 
@@ -318,7 +309,7 @@ impl Chip8 {
 
     fn wait_for_input(&mut self) {
         self.should_wait = true;
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
 
         let key_mapping = HashMap::from([
             (Keycode::Num1, 0x1),
@@ -357,41 +348,41 @@ impl Chip8 {
     }
 
     fn load_from_dt(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
         self.registers[vx as usize] = self.delay_timer;
     }
 
     fn load_to_dt(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
         self.delay_timer = self.registers[vx as usize];
     }
 
     fn load_to_st(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
         self.sound_timer = self.registers[vx as usize];
     }
 
     fn set_font_character(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
         let x = self.registers[vx as usize];
         self.vi = FONT_OFFSET + (x * 5) as u16;
     }
 
     fn load_to_memory(&mut self) {
-        let x = (self.opcode & 0x0F00) >> 8;
+        let x = self.opcode.get_x() as u16;
 
         for i in 0..=x {
             let mem_address = self.vi + i;
             self.memory[mem_address as usize] = self.registers[i as usize];
         }
 
-        if self.quirks.increment_index {
+        if self.quirks.has_increment_index() {
             self.vi += x + 1;
         }
     }
 
     fn load_from_memory(&mut self) {
-        let x: u16 = (self.opcode & 0x0F00) >> 8;
+        let x = self.opcode.get_x() as u16;
 
         for i in 0..=x {
             let mem_address = (self.vi) + i;
@@ -400,7 +391,7 @@ impl Chip8 {
     }
 
     fn binary_coded_decimal(&mut self) {
-        let vx = (self.opcode & 0x0F00) >> 8;
+        let vx = self.opcode.get_x();
         let x = self.registers[vx as usize];
 
         let address = self.vi;
@@ -411,13 +402,13 @@ impl Chip8 {
     }
 
     fn logic_op(&mut self) {
-        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let vx = self.opcode.get_x() as usize;
         let x = self.registers[vx];
 
-        let vy = ((self.opcode & 0x00F0) >> 4) as usize;
-        let y = self.registers[vy];
+        let vy = self.opcode.get_y();
+        let y = self.registers[vy as usize];
 
-        let operation = self.opcode & 0x000F;
+        let operation = self.opcode.get_n();
 
         self.registers[0xF] = 0;
         self.registers[vx] = match operation {
@@ -429,7 +420,7 @@ impl Chip8 {
             5 => self.subtract_overflow(x, y),
             6 => {
                 self.registers[0xF] = x & 1;
-                if self.quirks.shifting {
+                if self.quirks.has_shifting() {
                     y >> 1
                 } else {
                     x >> 1
@@ -438,7 +429,7 @@ impl Chip8 {
             7 => self.subtract_overflow(y, x),
             0xE => {
                 self.registers[0xF] = (x & 0x80) >> 7;
-                if self.quirks.shifting {
+                if self.quirks.has_shifting() {
                     y << 1
                 } else {
                     x << 1
@@ -480,39 +471,39 @@ impl Chip8 {
     fn random_number(&mut self) {
         let mut rng = rand::thread_rng();
 
-        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let vx = self.opcode.get_x() as usize;
 
-        let nn: u8 = (self.opcode & 0x00FF) as u8;
+        let nn: u8 = self.opcode.get_2n() as u8;
         let random: u8 = rng.gen();
 
         self.registers[vx] = random & nn;
     }
 
     fn skip_equal(&mut self) {
-        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let vx = self.opcode.get_x() as usize;
         let x = self.registers[vx];
 
-        let value = (self.opcode & 0x00FF) as u8;
+        let value = self.opcode.get_2n();
         if x == value {
             self.pc += 2;
         }
     }
 
     fn skip_not_equal(&mut self) {
-        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let vx = self.opcode.get_x() as usize;
         let x = self.registers[vx];
 
-        let value = (self.opcode & 0x00FF) as u8;
+        let value = self.opcode.get_2n();
         if x != value {
             self.pc += 2;
         }
     }
 
     fn skip_register_equal(&mut self) {
-        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let vx = self.opcode.get_x() as usize;
         let x = self.registers[vx];
 
-        let vy = ((self.opcode & 0x00F0) >> 4) as usize;
+        let vy = self.opcode.get_y() as usize;
         let y = self.registers[vy];
 
         if x == y {
@@ -521,10 +512,10 @@ impl Chip8 {
     }
 
     fn skip_register_not_equal(&mut self) {
-        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+        let vx = self.opcode.get_x() as usize;
         let x = self.registers[vx];
 
-        let vy = ((self.opcode & 0x00F0) >> 4) as usize;
+        let vy = self.opcode.get_y() as usize;
         let y = self.registers[vy];
 
         if x != y {
@@ -534,7 +525,7 @@ impl Chip8 {
 
     fn call_subroutine(&mut self) {
         self.stack.push(self.pc);
-        self.pc = self.opcode & 0x0FFF;
+        self.pc = self.opcode.get_3n();
         self.did_jump = true;
     }
 
@@ -547,22 +538,22 @@ impl Chip8 {
     }
 
     fn jump(&mut self) {
-        self.pc = self.opcode & 0x0FFF;
+        self.pc = self.opcode.get_3n();
         self.did_jump = true;
     }
 
     fn load_register(&mut self) {
-        let index = (self.opcode & 0x0F00) >> 8;
-        let value = self.opcode & 0x00FF;
+        let index = self.opcode.get_x();
+        let value = self.opcode.get_2n();
         self.registers[index as usize] = value as u8;
     }
 
     fn add_to_register(&mut self) {
-        let index = (self.opcode & 0x0F00) >> 8;
-        let value = self.opcode & 0x00FF;
+        let index = self.opcode.get_x();
+        let value = self.opcode.get_2n();
 
         // This overflow does not affect F flag
-        let mut sum = value + self.registers[index as usize] as u16;
+        let mut sum = value as u16 + self.registers[index as usize] as u16;
 
         if sum > 255 {
             sum -= 256;
@@ -572,19 +563,19 @@ impl Chip8 {
     }
 
     fn set_vi(&mut self) {
-        self.vi = self.opcode & 0x0FFF;
+        self.vi = self.opcode.get_3n();
     }
 
     fn draw(&mut self) {
         self.should_draw = true;
 
-        let vx = ((self.opcode & 0x0F00) >> 8) as usize;
-        let vy = ((self.opcode & 0x00F0) >> 4) as usize;
+        let vx = self.opcode.get_x() as usize;
+        let vy = self.opcode.get_y() as usize;
 
         let x = self.registers[vx] & (SCREEN_WIDTH - 1);
         let y = (self.registers[vy] & (SCREEN_HEIGHT as u8 - 1)) as usize;
 
-        let n = (self.opcode & 0x000F) as usize;
+        let n = self.opcode.get_n() as usize;
 
         self.registers[0xF] = 0;
 

@@ -1,9 +1,9 @@
 extern crate sdl2;
 
+use std::env;
 use std::time::{Duration, SystemTime};
 
-use crate::chip8::Chip8;
-use std::env;
+use crate::chip8::chip::Chip8;
 
 mod audio;
 mod chip8;
