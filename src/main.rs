@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 use crate::chip8::Chip8;
 use std::env;
 
+mod audio;
 mod chip8;
 mod screen;
 
