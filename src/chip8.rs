@@ -21,7 +21,7 @@ struct Quirks {
     jumping: bool,
 }
 
-pub struct Chip8<'a> {
+pub struct Chip8 {
     memory: Vec<u8>,
     stack: Vec<u16>,
     display: Display,
@@ -34,12 +34,12 @@ pub struct Chip8<'a> {
     delay_timer: u8,
     sound_timer: u8,
     sound_device: AudioDevice<SquareWave>,
-    event_pump: &'a mut EventPump,
+    event_pump: EventPump,
     quirks: Quirks,
     should_draw: bool,
 }
 
-impl fmt::Debug for Chip8<'_> {
+impl fmt::Debug for Chip8 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
@@ -49,8 +49,12 @@ impl fmt::Debug for Chip8<'_> {
     }
 }
 
-impl Chip8<'_> {
-    pub fn new<'a>(sdl: &'a Sdl, event_pump: &'a mut EventPump) -> Chip8<'a> {
+impl Chip8 {
+    pub fn new() -> Chip8 {
+        // Initialize memory
+        let mut memory = vec![0u8; 4096];
+
+        // Iterate over fonts and add corresponding byte to address in memory
         let font_data = [
             0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
             0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -70,19 +74,22 @@ impl Chip8<'_> {
             0xF0, 0x80, 0xF0, 0x80, 0x80, // F
         ];
 
-        let mut memory = vec![0u8; 4096];
-
         for (index, byte) in font_data.iter().enumerate() {
             let address = index + FONT_OFFSET as usize;
             memory[address] = *byte;
         }
 
-        let audio_subsystem = sdl.audio().unwrap();
+        // Initialize SDL2 and Event Pump
+        let sdl_context = sdl2::init().unwrap();
+        let event_pump = sdl_context.event_pump().unwrap();
+
+        // Initialize SDL2 Audio Subsystem
+        let audio_subsystem = sdl_context.audio().unwrap();
 
         let desired_spec = AudioSpecDesired {
             freq: Some(44100),
-            channels: Some(1), // mono
-            samples: None,     // default sample size
+            channels: Some(1),
+            samples: None,
         };
 
         let device = audio_subsystem
@@ -92,10 +99,11 @@ impl Chip8<'_> {
             })
             .unwrap();
 
+        // Return new instance
         Chip8 {
             memory: memory,
             stack: vec![],
-            display: Display::new(&sdl),
+            display: Display::new(&sdl_context),
             registers: [0u8; 16],
             opcode: 0u16,
             vi: 0u16,
