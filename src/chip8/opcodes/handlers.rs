@@ -1,10 +1,20 @@
+use std::collections::HashMap;
+
 use crate::chip8::opcodes::parser;
 use crate::chip8::quirks::Quirks;
 use crate::chip8::state::ChipState;
 use crate::screen::{Screen, SCREEN_HEIGHT, SCREEN_WIDTH};
 use rand::Rng;
+use sdl2::EventPump;
+use sdl2::keyboard::Scancode;
 
-pub fn run(opcode: u16, state: &mut ChipState, quirks: Quirks, screen: &mut Screen) {
+pub fn run(
+    opcode: u16,
+    state: &mut ChipState,
+    quirks: Quirks,
+    screen: &mut Screen,
+    events: &EventPump,
+) {
     match parser::get_digit(opcode) {
         0x0 => run_00en(opcode, state, screen),
         0x1 => run_1nnn(opcode, state),
@@ -20,7 +30,7 @@ pub fn run(opcode: u16, state: &mut ChipState, quirks: Quirks, screen: &mut Scre
         0xB => run_bnnn(opcode, state, quirks.has_jumping()),
         0xC => run_cxnn(opcode, state),
         0xD => run_dxyn(opcode, state, screen),
-        0xE => (),
+        0xE => run_exnn(opcode, state, events),
         0xF => (),
         _ => {}
     }
@@ -215,4 +225,41 @@ fn run_dxyn(opcode: u16, state: &mut ChipState, screen: &mut Screen) {
 
         *line = new_line;
     }
+}
+
+fn run_exnn(opcode: u16, state: &mut ChipState, events: &EventPump) {
+    let x = parser::get_x(opcode) as usize;
+    let vx = state.registers[x];
+
+    let key = key_map(vx);
+
+    match parser::get_2n(opcode) {
+        0x9E => {},
+        0xA1 => {},
+        _ => {}
+    }
+
+}
+
+fn key_map(key: u8) -> Scancode {
+    let key_mapping = HashMap::from([
+        (0x1, Scancode::Num1),
+        (0x2, Scancode::Num2),
+        (0x3, Scancode::Num3),
+        (0xC, Scancode::Num4),
+        (0x4, Scancode::Q),
+        (0x5, Scancode::W),
+        (0x6, Scancode::E),
+        (0xD, Scancode::R),
+        (0x7, Scancode::A),
+        (0x8, Scancode::S),
+        (0x9, Scancode::D),
+        (0xE, Scancode::F),
+        (0xA, Scancode::Z),
+        (0x0, Scancode::X),
+        (0xB, Scancode::C),
+        (0xF, Scancode::V),
+    ]);
+
+    *key_mapping.get(&key).unwrap()
 }
