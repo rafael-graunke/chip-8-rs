@@ -108,7 +108,7 @@ pub fn run_8xyn(opcode: u16, state: &mut ChipState, change_x: bool) {
     let vx = state.registers[x];
     let vy = state.registers[y];
 
-    state.registers[15] = 0;
+    let mut carry: Option<u8> = None;
 
     state.registers[x] = match op {
         0x0 => vy,
@@ -116,16 +116,17 @@ pub fn run_8xyn(opcode: u16, state: &mut ChipState, change_x: bool) {
         0x2 => vx & vy,
         0x3 => vx ^ vy,
         0x4 => {
+            carry = Some(0);
             let sum = (vx as u16) + (vy as u16);
             if sum > 255 {
-                state.registers[15] = 1; // Set carry flag
+                carry = Some(1); // Set carry flag
             }
             sum as u8
         }
         0x5 => {
-            state.registers[15] = 1;
+            carry = Some(1);
             if vx < vy {
-                state.registers[15] = 0;
+                carry = Some(0);
                 ((vx as u16 | 0x100) - (vy as u16)) as u8
             } else {
                 ((vx as u16) - (vy as u16)) as u8
@@ -133,17 +134,17 @@ pub fn run_8xyn(opcode: u16, state: &mut ChipState, change_x: bool) {
         }
         0x6 => {
             if change_x {
-                state.registers[15] = vy & 1;
+                carry = Some(vy & 1);
                 vy >> 1
             } else {
-                state.registers[15] = vx & 1;
+                carry = Some(vx & 1);
                 vx >> 1
             }
         }
         0x7 => {
-            state.registers[15] = 1;
+            carry = Some(1);
             if vy < vx {
-                state.registers[15] = 0;
+                carry = Some(0);
                 ((vy as u16 | 0x100) - (vx as u16)) as u8
             } else {
                 ((vy as u16) - (vx as u16)) as u8
@@ -151,15 +152,19 @@ pub fn run_8xyn(opcode: u16, state: &mut ChipState, change_x: bool) {
         }
         0xE => {
             if change_x {
-                state.registers[15] = (vy & 0x80) >> 7;
+                carry = Some((vy & 0x80) >> 7);
                 vy << 1
             } else {
-                state.registers[15] = (vx & 0x80) >> 7;
+                carry = Some((vx & 0x80) >> 7);
                 vx << 1
             }
         }
         _ => 0,
-    }
+    };
+
+    if let Some(n) = carry {
+        state.registers[15] = n;
+    };
 }
 
 pub fn run_9xy0(opcode: u16, state: &mut ChipState) {
