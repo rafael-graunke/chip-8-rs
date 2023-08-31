@@ -8,7 +8,7 @@ use std::io::prelude::*;
 use crate::audio::SquareWave;
 use crate::screen::Screen;
 
-use crate::chip8::opcodes::{handlers, parser};
+use crate::chip8::opcodes::handlers;
 use crate::chip8::quirks::Quirks;
 use crate::chip8::state::ChipState;
 
