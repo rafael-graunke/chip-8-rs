@@ -78,10 +78,9 @@ impl Chip8 {
     }
 
     pub fn fetch(&self) -> u16 {
-        let first_byte = self.state.memory[self.state.pc as usize];
-        let second_byte = self.state.memory[self.state.pc as usize + 1];
-
-        ((first_byte as u16) << 8) | second_byte as u16
+        let addr = self.state.pc as usize;
+        let bytes = <[u8; 2]>::try_from(&self.state.memory[addr..=addr + 1]).unwrap();
+        u16::from_be_bytes(bytes)
     }
 
     pub fn step(&mut self, ipf: u32) {
@@ -99,6 +98,28 @@ impl Chip8 {
                 }
             }
         }
+
+        // let mut wait_for_step = true;
+
+        // while wait_for_step {
+        //     for event in self.event_pump.poll_iter() {
+        //         match event {
+        //             Event::Quit { .. }
+        //             | Event::KeyDown {
+        //                 keycode: Some(Keycode::Escape),
+        //                 ..
+        //             } => self.state.running = false,
+        //             Event::KeyDown {
+        //                 keycode: Some(Keycode::Space),
+        //                 ..
+        //             } => {
+        //                 println!("{:?}", self.state);
+        //                 wait_for_step = false;
+        //             }
+        //             _ => {}
+        //         }
+        //     }
+        // }
 
         // Run N instructions per seconds
         for _ in 0..ipf {
