@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::chip8::opcodes::parser;
+use crate::chip8::opcodes::parser::OpCode;
 use crate::chip8::quirks::Quirks;
 use crate::chip8::state::ChipState;
 use crate::screen::{Screen, SCREEN_HEIGHT, SCREEN_WIDTH};
@@ -9,76 +9,74 @@ use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Scancode};
 use sdl2::EventPump;
 
-pub fn run(
-    opcode: u16,
+pub fn decode_and_run(
+    opcode: OpCode,
     state: &mut ChipState,
     quirks: &Quirks,
     screen: &mut Screen,
     events: &mut EventPump,
 ) {
-    match parser::get_digit(opcode) {
-        0x0 => run_00en(opcode, state, screen),
-        0x1 => run_1nnn(opcode, state),
-        0x2 => run_2nnn(opcode, state),
-        0x3 => run_3xnn(opcode, state),
-        0x4 => run_4xnn(opcode, state),
-        0x5 => run_5xy0(opcode, state),
-        0x6 => run_6xnn(opcode, state),
-        0x7 => run_7xnn(opcode, state),
-        0x8 => run_8xyn(opcode, state, quirks.has_shifting()),
-        0x9 => run_9xy0(opcode, state),
-        0xA => run_annn(opcode, state),
-        0xB => run_bnnn(opcode, state, !quirks.has_jumping()),
-        0xC => run_cxnn(opcode, state),
-        0xD => run_dxyn(opcode, state, screen),
-        0xE => run_exnn(opcode, state, events),
-        0xF => run_fxnn(opcode, state, events),
+    match opcode {
+        OpCode(0, 0, 0xE, 0) => run_00e0(screen),
+        OpCode(0, 0, 0xE, 0xE) => run_00ee(state),
+        OpCode(1, _, _, _) => run_1nnn(opcode.get_3n(), state),
+        OpCode(2, _, _, _) => run_2nnn(opcode.get_3n(), state),
+        OpCode(3, x, _, _) => run_3xnn(x.into(), opcode.get_2n(), state),
+        OpCode(4, x, _, _) => run_4xnn(x.into(), opcode.get_2n(), state),
+        OpCode(5, x, y, 0) => run_5xy0(x.into(), y.into(), state),
+        OpCode(6, x, _, _) => run_6xnn(x.into(), opcode.get_2n(), state),
+        OpCode(7, x, _, _) => run_7xnn(x.into(), opcode.get_2n(), state),
+        OpCode(9, x, y, 0) => run_9xy0(x.into(), y.into(), state),
+        OpCode(0xA, _, _, _) => run_annn(opcode.get_3n(), state),
+        OpCode(0xB, x, _, _) => run_bnnn(x.into(), opcode.get_3n(), state, !quirks.has_jumping()),
+        OpCode(0xC, x, _, _) => run_cxnn(x.into(), opcode.get_2n(), state),
+        OpCode(0xD, x, y, n) => run_dxyn(x.into(), y.into(), n, state, screen),
+        OpCode(0xE, x, 9, 0xE) => run_ex9e(x.into(), state, events),
+        OpCode(0xE, x, 0xA, 1) => run_exa1(x.into(), state, events),
+        OpCode(0xF, x, _, _) => run_fxnn(x.into(), opcode.get_2n(), state, events),
+        // Logic Operations
+        OpCode(8, x, y, n) => run_8xyn(x.into(), y.into(), n, state, quirks.has_shifting()),
         _ => {}
     }
 }
 
-pub fn run_00en(opcode: u16, state: &mut ChipState, screen: &mut Screen) {
-    match parser::get_n(opcode) {
-        0x0 => screen.clear(),
-        0xE => state.pc = state.stack.pop().unwrap(),
-        _ => {}
-    }
+fn run_00e0(screen: &mut Screen) {
+    screen.clear()
 }
 
-pub fn run_1nnn(opcode: u16, state: &mut ChipState) {
-    state.pc = parser::get_3n(opcode);
+fn run_00ee(state: &mut ChipState) {
+    state.pc = state.stack.pop().unwrap()
+}
+
+fn run_1nnn(nnn: u16, state: &mut ChipState) {
+    state.pc = nnn;
     state.did_jump = true;
 }
 
-pub fn run_2nnn(opcode: u16, state: &mut ChipState) {
+fn run_2nnn(nnn: u16, state: &mut ChipState) {
     state.stack.push(state.pc);
-    state.pc = parser::get_3n(opcode);
+    state.pc = nnn;
     state.did_jump = true;
 }
 
-pub fn run_3xnn(opcode: u16, state: &mut ChipState) {
-    let x = parser::get_x(opcode) as usize;
+fn run_3xnn(x: usize, nn: u8, state: &mut ChipState) {
     let vx = state.registers[x];
 
-    if vx == parser::get_2n(opcode) {
+    if vx == nn {
         state.skip();
     }
 }
 
-pub fn run_4xnn(opcode: u16, state: &mut ChipState) {
-    let x = parser::get_x(opcode) as usize;
+fn run_4xnn(x: usize, nn: u8, state: &mut ChipState) {
     let vx = state.registers[x];
 
-    if vx != parser::get_2n(opcode) {
+    if vx != nn {
         state.skip();
     }
 }
 
-pub fn run_5xy0(opcode: u16, state: &mut ChipState) {
-    let x = parser::get_x(opcode) as usize;
+fn run_5xy0(x: usize, y: usize, state: &mut ChipState) {
     let vx = state.registers[x];
-
-    let y = parser::get_y(opcode) as usize;
     let vy = state.registers[y];
 
     if vx == vy {
@@ -86,31 +84,23 @@ pub fn run_5xy0(opcode: u16, state: &mut ChipState) {
     }
 }
 
-pub fn run_6xnn(opcode: u16, state: &mut ChipState) {
-    let x = parser::get_x(opcode) as usize;
-
-    state.registers[x] = parser::get_2n(opcode);
+fn run_6xnn(x: usize, nn: u8, state: &mut ChipState) {
+    state.registers[x] = nn;
 }
 
-pub fn run_7xnn(opcode: u16, state: &mut ChipState) {
-    let x = parser::get_x(opcode) as usize;
-
-    let sum = state.registers[x] as u16 + parser::get_2n(opcode) as u16;
+fn run_7xnn(x: usize, nn: u8, state: &mut ChipState) {
+    let sum = state.registers[x] as u16 + nn as u16;
 
     state.registers[x] = sum as u8;
 }
 
-pub fn run_8xyn(opcode: u16, state: &mut ChipState, change_x: bool) {
-    let x = parser::get_x(opcode) as usize;
-    let y = parser::get_y(opcode) as usize;
-    let op = parser::get_n(opcode);
-
+fn run_8xyn(x: usize, y: usize, n: u8, state: &mut ChipState, change_x: bool) {
     let vx = state.registers[x];
     let vy = state.registers[y];
 
     let mut carry = 0u8;
 
-    state.registers[x] = match op {
+    state.registers[x] = match n {
         0x0 => vy,
         0x1 => vx | vy,
         0x2 => vx & vy,
@@ -162,11 +152,8 @@ pub fn run_8xyn(opcode: u16, state: &mut ChipState, change_x: bool) {
     state.registers[15] = carry;
 }
 
-pub fn run_9xy0(opcode: u16, state: &mut ChipState) {
-    let x = parser::get_x(opcode) as usize;
+fn run_9xy0(x: usize, y: usize, state: &mut ChipState) {
     let vx = state.registers[x];
-
-    let y = parser::get_y(opcode) as usize;
     let vy = state.registers[y];
 
     if vx != vy {
@@ -174,37 +161,30 @@ pub fn run_9xy0(opcode: u16, state: &mut ChipState) {
     }
 }
 
-pub fn run_annn(opcode: u16, state: &mut ChipState) {
-    state.vi = parser::get_3n(opcode);
+fn run_annn(nnn: u16, state: &mut ChipState) {
+    state.vi = nnn;
 }
 
-pub fn run_bnnn(opcode: u16, state: &mut ChipState, use_x: bool) {
-    let x = if use_x { parser::get_x(opcode) } else { 0 };
+fn run_bnnn(x: usize, nnn: u16, state: &mut ChipState, use_x: bool) {
+    let x = if use_x { x } else { 0 };
 
-    let address = parser::get_3n(opcode) + state.registers[x as usize] as u16;
+    let address = nnn + state.registers[x as usize] as u16;
 
     state.pc = address;
     state.did_jump = true;
 }
 
-pub fn run_cxnn(opcode: u16, state: &mut ChipState) {
+fn run_cxnn(x: usize, nn: u8, state: &mut ChipState) {
     let mut rng = rand::thread_rng();
-
-    let x = parser::get_x(opcode) as usize;
 
     let random: u8 = rng.gen();
 
-    state.registers[x] = random & parser::get_2n(opcode);
+    state.registers[x] = random & nn;
 }
 
-pub fn run_dxyn(opcode: u16, state: &mut ChipState, screen: &mut Screen) {
-    let x = parser::get_x(opcode) as usize;
+fn run_dxyn(x: usize, y: usize, n: u8, state: &mut ChipState, screen: &mut Screen) {
     let vx = state.registers[x] & (SCREEN_WIDTH - 1);
-
-    let y = parser::get_y(opcode) as usize;
     let vy = state.registers[y] & (SCREEN_HEIGHT as u8 - 1);
-
-    let n = parser::get_n(opcode);
 
     state.registers[15] = 0;
 
@@ -237,36 +217,33 @@ pub fn run_dxyn(opcode: u16, state: &mut ChipState, screen: &mut Screen) {
     state.should_draw = true;
 }
 
-pub fn run_exnn(opcode: u16, state: &mut ChipState, events: &mut EventPump) {
-    let x = parser::get_x(opcode) as usize;
+fn run_ex9e(x: usize, state: &mut ChipState, events: &mut EventPump) {
     let vx = state.registers[x];
-
     let key = u8_to_scancode(vx);
 
-    match parser::get_2n(opcode) {
-        0x9E => {
-            if events
-                .keyboard_state()
-                .pressed_scancodes()
-                .any(|code| code == key)
-            {
-                state.skip()
-            }
-        }
-        0xA1 => {
-            if events
-                .keyboard_state()
-                .pressed_scancodes()
-                .all(|code| code != key)
-            {
-                state.skip()
-            }
-        }
-        _ => {}
+    if events
+        .keyboard_state()
+        .pressed_scancodes()
+        .any(|code| code == key)
+    {
+        state.skip()
     }
 }
 
-pub fn run_fxnn(opcode: u16, state: &mut ChipState, events: &mut EventPump) {
+fn run_exa1(x: usize, state: &mut ChipState, events: &mut EventPump) {
+    let vx = state.registers[x];
+    let key = u8_to_scancode(vx);
+
+    if events
+        .keyboard_state()
+        .pressed_scancodes()
+        .all(|code| code != key)
+    {
+        state.skip()
+    }
+}
+
+fn run_fxnn(x: usize, nn: u8, state: &mut ChipState, events: &mut EventPump) {
     fn wait_for_key(x: usize, state: &mut ChipState, events: &mut EventPump) {
         state.should_wait = true;
 
@@ -313,12 +290,9 @@ pub fn run_fxnn(opcode: u16, state: &mut ChipState, events: &mut EventPump) {
         state.memory[(address + 2) as usize] = vx % 10;
     }
 
-    let x = parser::get_x(opcode) as usize;
     let vx = &mut state.registers[x];
 
-    let op = parser::get_2n(opcode);
-
-    match op {
+    match nn {
         0x07 => *vx = state.delay_timer,
         0x0A => wait_for_key(x, state, events),
         0x15 => state.delay_timer = *vx,

@@ -12,6 +12,8 @@ use crate::chip8::opcodes::handlers;
 use crate::chip8::quirks::Quirks;
 use crate::chip8::state::ChipState;
 
+use super::opcodes::parser::OpCode;
+
 const MEM_OFFSET: u16 = 0x200;
 const DEBUG: bool = false;
 
@@ -77,10 +79,10 @@ impl Chip8 {
         self.state.running
     }
 
-    pub fn fetch(&self) -> u16 {
+    pub fn fetch(&self) -> OpCode {
         let addr = self.state.pc as usize;
         let bytes = <[u8; 2]>::try_from(&self.state.memory[addr..=addr + 1]).unwrap();
-        u16::from_be_bytes(bytes)
+        OpCode::from(u16::from_be_bytes(bytes))
     }
 
     pub fn step(&mut self, ipf: u32) {
@@ -125,7 +127,7 @@ impl Chip8 {
         for _ in 0..ipf {
             let code = self.fetch();
 
-            handlers::run(
+            handlers::decode_and_run(
                 code,
                 &mut self.state,
                 &self.quirks,
