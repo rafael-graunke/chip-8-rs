@@ -198,15 +198,17 @@ pub fn run_cxnn(opcode: u16, state: &mut ChipState) {
 }
 
 pub fn run_dxyn(opcode: u16, state: &mut ChipState, screen: &mut Screen) {
-    state.should_draw = true;
-
     let x = parser::get_x(opcode) as usize;
-    let vx = state.registers[x] & (SCREEN_WIDTH - 1);
+    let vx = state.registers[x] & (SCREEN_WIDTH - 1); 
 
     let y = parser::get_y(opcode) as usize;
     let vy = state.registers[y] & (SCREEN_HEIGHT as u8 - 1);
 
-    let n = parser::get_n(opcode);
+    let mut n = parser::get_n(opcode);
+
+    if vy + n > 31 {
+        n = vy + n - 31;
+    };
 
     state.registers[15] = 0;
 
@@ -233,6 +235,8 @@ pub fn run_dxyn(opcode: u16, state: &mut ChipState, screen: &mut Screen) {
 
         *line = new_line;
     }
+
+    state.should_draw = true;
 }
 
 pub fn run_exnn(opcode: u16, state: &mut ChipState, events: &mut EventPump) {
