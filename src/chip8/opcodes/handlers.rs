@@ -199,41 +199,39 @@ pub fn run_cxnn(opcode: u16, state: &mut ChipState) {
 
 pub fn run_dxyn(opcode: u16, state: &mut ChipState, screen: &mut Screen) {
     let x = parser::get_x(opcode) as usize;
-    let vx = state.registers[x] & (SCREEN_WIDTH - 1); 
+    let vx = state.registers[x] & (SCREEN_WIDTH - 1);
 
     let y = parser::get_y(opcode) as usize;
     let vy = state.registers[y] & (SCREEN_HEIGHT as u8 - 1);
 
-    let mut n = parser::get_n(opcode);
-
-    if vy + n > 31 {
-        n = vy + n - 31;
-    };
+    let n = parser::get_n(opcode);
 
     state.registers[15] = 0;
 
     for index in 0..n {
-        let wrap_pos = (vy + index) & (SCREEN_HEIGHT - 1) as u8;
-        let line = &mut screen.screen_memory[wrap_pos as usize];
+        if index + vy <= 31 {
+            let wrap_pos = (vy + index) & (SCREEN_HEIGHT - 1) as u8;
+            let line = &mut screen.screen_memory[wrap_pos as usize];
 
-        let address = state.vi + index as u16;
+            let address = state.vi + index as u16;
 
-        let sprite = state.memory[address as usize] as u64;
+            let sprite = state.memory[address as usize] as u64;
 
-        let offset_sprite = sprite << (SCREEN_WIDTH - 8) >> vx;
+            let offset_sprite = sprite << (SCREEN_WIDTH - 8) >> vx;
 
-        let new_line = *line ^ offset_sprite;
+            let new_line = *line ^ offset_sprite;
 
-        for bit in 0..SCREEN_WIDTH {
-            let bit_before = *line & (0x8000000000000000 >> bit);
-            let bit_after = new_line & (0x8000000000000000 >> bit);
+            for bit in 0..SCREEN_WIDTH {
+                let bit_before = *line & (0x8000000000000000 >> bit);
+                let bit_after = new_line & (0x8000000000000000 >> bit);
 
-            if (bit_before != bit_after) && (bit_before >> (SCREEN_WIDTH - 1 - bit)) == 1 {
-                state.registers[15] = 1;
+                if (bit_before != bit_after) && (bit_before >> (SCREEN_WIDTH - 1 - bit)) == 1 {
+                    state.registers[15] = 1;
+                }
             }
-        }
 
-        *line = new_line;
+            *line = new_line;
+        }
     }
 
     state.should_draw = true;
