@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::chip8::opcodes::parser::OpCode;
-use crate::chip8::quirks::Quirks;
-use crate::chip8::state::ChipState;
+use crate::core::opcode::OpCode;
+use crate::core::quirks::Quirks;
+use crate::core::state::ChipState;
 use crate::screen::{Screen, SCREEN_HEIGHT, SCREEN_WIDTH};
 use rand::Rng;
 use sdl2::event::Event;
@@ -35,6 +35,12 @@ pub fn decode_and_run(
         OpCode(0xE, x, 0xA, 1) => run_exa1(x.into(), state, events),
         OpCode(0xF, x, _, _) => run_fxnn(x.into(), opcode.get_2n(), state, events),
         // Logic Operations
+        OpCode(8, x, y, 0) => run_8xy0(x.into(), y.into(), state),
+        OpCode(8, x, y, 1) => run_8xy1(x.into(), y.into(), state),
+        OpCode(8, x, y, 2) => run_8xy2(x.into(), y.into(), state),
+        OpCode(8, x, y, 3) => run_8xy3(x.into(), y.into(), state),
+        OpCode(8, x, y, 4) => run_8xy4(x.into(), y.into(), state),
+        OpCode(8, x, y, 5) => run_8xy5(x.into(), y.into(), state),
         OpCode(8, x, y, n) => run_8xyn(x.into(), y.into(), n, state, quirks.has_shifting()),
         _ => {}
     }
@@ -93,6 +99,59 @@ fn run_7xnn(x: usize, nn: u8, state: &mut ChipState) {
 
     state.registers[x] = sum as u8;
 }
+
+fn run_8xy0(x: usize, y: usize, state: &mut ChipState) {
+    state.registers[x] = state.registers[y];
+    state.registers[15] = 0;
+}
+
+fn run_8xy1(x: usize, y: usize, state: &mut ChipState) {
+    state.registers[x] = state.registers[x] | state.registers[y];
+    state.registers[15] = 0;
+}
+
+fn run_8xy2(x: usize, y: usize, state: &mut ChipState) {
+    state.registers[x] = state.registers[x] & state.registers[y];
+    state.registers[15] = 0;
+}
+
+fn run_8xy3(x: usize, y: usize, state: &mut ChipState) {
+    state.registers[x] = state.registers[x] ^ state.registers[y];
+    state.registers[15] = 0;
+}
+
+fn run_8xy4(x: usize, y: usize, state: &mut ChipState) {
+    let vx = state.registers[x];
+    let vy = state.registers[y];
+
+    let sum = (vx as u16) + (vy as u16);
+
+    state.registers[x] = sum as u8;
+
+    state.registers[15] = if sum > 255 { 1 } else { 0 };
+}
+
+fn run_8xy5(x: usize, y: usize, state: &mut ChipState) {
+    let vx = state.registers[x];
+    let vy = state.registers[y];
+
+    let mut carry = 0u8;
+
+    let sub = if vx < vy {
+        ((vx as u16 | 0x100) - (vy as u16)) as u8
+    } else {
+        carry = 1;
+        vx - vy
+    };
+
+    state.registers[x] = sub;
+
+    state.registers[15] = carry;
+}
+
+fn run_8xy6() {}
+fn run_8xy7() {}
+fn run_8xye() {}
 
 fn run_8xyn(x: usize, y: usize, n: u8, state: &mut ChipState, change_x: bool) {
     let vx = state.registers[x];

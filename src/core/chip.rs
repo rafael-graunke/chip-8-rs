@@ -8,11 +8,10 @@ use std::io::prelude::*;
 use crate::audio::SquareWave;
 use crate::screen::Screen;
 
-use crate::chip8::opcodes::handlers;
-use crate::chip8::quirks::Quirks;
-use crate::chip8::state::ChipState;
-
-use super::opcodes::parser::OpCode;
+use crate::core::handlers;
+use crate::core::opcode::OpCode;
+use crate::core::quirks::Quirks;
+use crate::core::state::ChipState;
 
 const MEM_OFFSET: u16 = 0x200;
 const DEBUG: bool = false;
@@ -100,28 +99,6 @@ impl Chip8 {
                 }
             }
         }
-
-        // let mut wait_for_step = true;
-
-        // while wait_for_step {
-        //     for event in self.event_pump.poll_iter() {
-        //         match event {
-        //             Event::Quit { .. }
-        //             | Event::KeyDown {
-        //                 keycode: Some(Keycode::Escape),
-        //                 ..
-        //             } => self.state.running = false,
-        //             Event::KeyDown {
-        //                 keycode: Some(Keycode::Space),
-        //                 ..
-        //             } => {
-        //                 println!("{:?}", self.state);
-        //                 wait_for_step = false;
-        //             }
-        //             _ => {}
-        //         }
-        //     }
-        // }
 
         // Run N instructions per seconds
         for _ in 0..ipf {

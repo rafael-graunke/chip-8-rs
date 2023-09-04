@@ -3,10 +3,10 @@ extern crate sdl2;
 use std::env;
 use std::time::{Duration, SystemTime};
 
-use crate::chip8::chip::Chip8;
+use crate::core::chip::Chip8;
 
 mod audio;
-mod chip8;
+mod core;
 mod screen;
 
 const FPS: u128 = 60;
